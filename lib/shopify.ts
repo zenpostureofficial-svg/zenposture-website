@@ -38,6 +38,8 @@ export interface ShopifyOption {
 }
 
 const STORE_URL = 'zen-posture-2.myshopify.com';
+// Branded checkout domain (e.g. shop.zenposture.in). Falls back to Shopify URL if not set.
+const CHECKOUT_DOMAIN = process.env.NEXT_PUBLIC_CHECKOUT_DOMAIN || STORE_URL;
 
 export async function fetchAllProducts(): Promise<ShopifyProduct[]> {
   try {
@@ -81,9 +83,9 @@ export function formatPrice(price: string | number): string {
 }
 
 export function getCheckoutUrl(variantId: number): string {
-  return `https://${STORE_URL}/cart/${variantId}:1`;
+  return `https://${CHECKOUT_DOMAIN}/cart/${variantId}:1`;
 }
 
 export function getBuyNowUrl(variantId: number): string {
-  return `https://${STORE_URL}/cart/${variantId}:1`;
+  return `https://${CHECKOUT_DOMAIN}/cart/${variantId}:1`;
 }
