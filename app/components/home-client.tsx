@@ -8,6 +8,7 @@ import FeaturedProducts from './featured-products';
 import CategorySection from './category-section';
 import WhySection from './why-section';
 import TrustSection from './trust-section';
+import TransformationSection from './transformation-section';
 import AllProductsSection from './all-products-section';
 import TestimonialsSection from './testimonials-section';
 import FaqSection from './faq-section';
@@ -25,6 +26,7 @@ export default function HomeClient() {
       <CategorySection />
       <WhySection />
       <TrustSection />
+      <TransformationSection />
       <AllProductsSection />
       <TestimonialsSection />
       <FaqSection />

@@ -13,14 +13,21 @@ const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mon
 
 export const metadata = {
   metadataBase: new URL(process.env.NEXTAUTH_URL || 'https://zenposture.in'),
-  title: 'ZenPosture — Premium Posture Correction & Body Support',
-  description: 'India\'s trusted brand for posture correctors, support belts & wellness accessories. Free shipping, COD available, 30-day guarantee. Starting at ₹499.',
-  keywords: 'posture corrector, back support, shoulder brace, abdominal belt, postpartum belt, sweat belt, India',
+  title: 'ZenPosture — Fix Your Posture. Transform Your Life. | India\'s #1 Posture Brand',
+  description: 'India\'s most trusted posture correction brand. Clinically-designed posture correctors, back support belts & wellness products. 10,000+ happy customers. Free shipping, COD, 30-day guarantee. Starting at ₹499.',
+  keywords: 'posture corrector India, back pain relief, shoulder brace, posture belt, postpartum belt, abdominal support belt, desk worker posture, back support belt India, ZenPosture',
   openGraph: {
     title: 'ZenPosture — Fix Your Posture. Transform Your Life.',
-    description: 'Premium posture correction & body support products. Trusted by 10,000+ Indians. Free shipping & COD available.',
+    description: '10,000+ Indians trust ZenPosture for posture correction & back pain relief. Premium products from ₹499. Free shipping & COD.',
     images: ['/og-image.png'],
     type: 'website',
+    siteName: 'ZenPosture',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'ZenPosture — India\'s #1 Posture Correction Brand',
+    description: '10,000+ happy customers. Premium posture correctors from ₹499. Free shipping & COD.',
+    images: ['/og-image.png'],
   },
   icons: {
     icon: '/favicon.svg',
