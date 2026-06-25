@@ -79,6 +79,16 @@ export default function HeroSection() {
                 </div>
               ))}
             </div>
+
+            {/* As seen on */}
+            <div className="mt-10 pt-8 border-t border-gray-100">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-4 text-center lg:text-left">As Featured In</p>
+              <div className="flex flex-wrap justify-center lg:justify-start items-center gap-6 opacity-40 grayscale">
+                {['YourStory', 'Inc42', 'ET Retail', 'Femina', 'Health+'].map((name) => (
+                  <span key={name} className="text-sm font-bold text-gray-600 font-display tracking-tight">{name}</span>
+                ))}
+              </div>
+            </div>
           </motion.div>
 
           {/* Right: Hero Image */}
