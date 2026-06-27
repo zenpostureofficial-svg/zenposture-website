@@ -138,61 +138,54 @@ def download_sadtalker_models():
 def generate_voice(script_text, voice_sample=None, output_path=_TEMP_VOICE,
                    language="en", speed=0.9):
     """
-    Convert script text to WAV using Coqui XTTS v2.
-    If voice_sample is given, clones that voice.
-    Otherwise uses a clear default male English voice.
+    Convert script text to WAV using edge-tts (Microsoft neural voices).
+    Fast, free, no GPU needed, no version conflicts.
+    If voice_sample is provided it is noted but edge-tts does not clone voices —
+    for voice cloning install Coqui TTS separately once version issues are resolved.
     """
-    print("\n  🎙️   Generating voice with Coqui XTTS v2…")
+    print("\n  🎙️   Generating voice with edge-tts (Microsoft Neural)…")
 
     try:
-        import torch
-        from TTS.api import TTS
+        import asyncio
+        import edge_tts
     except ImportError:
-        print("  ❌  Coqui TTS not installed. Run: pip install TTS")
+        print("  ❌  edge-tts not installed. Run: pip install edge-tts")
         sys.exit(1)
 
-    device = "cuda" if __import__("torch").cuda.is_available() else "cpu"
-    print(f"  🖥️   Using device: {device}")
-    if device == "cpu":
-        print("  ⚠️   GPU not detected — voice generation will be slow (~5 min). Normal on first run.")
+    if voice_sample:
+        print("  ℹ️   Voice sample provided but edge-tts doesn't clone voices.")
+        print("       Using professional male voice instead.")
 
-    # Split long scripts into chunks to avoid XTTS context limits
-    chunks = _split_script(script_text, max_chars=230)
-    print(f"  📝  Script split into {len(chunks)} chunks for processing…")
+    # Best voices for investor/professional content
+    # en-IN-PrabhatNeural = Indian English male (matches your accent)
+    # en-US-GuyNeural     = US English male (neutral, professional)
+    voice = "en-IN-PrabhatNeural"
+    rate  = "-10%"  # slightly slower = more confident
+    print(f"  🎤  Voice: {voice}  |  Rate: {rate}")
 
-    tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+    mp3_path = output_path.replace(".wav", ".mp3")
 
-    chunk_files = []
-    for i, chunk in enumerate(chunks):
-        chunk_path = os.path.join(_ASSETS, f"chunk_{i:03d}.wav")
-        print(f"  🔊  Chunk {i+1}/{len(chunks)}: {chunk[:50]}…")
+    async def _synthesize():
+        communicate = edge_tts.Communicate(script_text, voice, rate=rate)
+        await communicate.save(mp3_path)
 
-        if voice_sample and os.path.exists(voice_sample):
-            tts.tts_to_file(
-                text=chunk,
-                speaker_wav=voice_sample,
-                language=language,
-                file_path=chunk_path,
-                speed=speed,
-            )
-        else:
-            # Default XTTS speaker — clear professional male voice
-            tts.tts_to_file(
-                text=chunk,
-                speaker="Aaron Dreschner",
-                language=language,
-                file_path=chunk_path,
-                speed=speed,
-            )
-        chunk_files.append(chunk_path)
+    asyncio.run(_synthesize())
 
-    # Concatenate all chunks into single WAV
-    _concat_wav(chunk_files, output_path)
+    # Convert MP3 → WAV using ffmpeg
+    print("  🔄  Converting MP3 → WAV…")
+    result = subprocess.run(
+        f'ffmpeg -y -i "{mp3_path}" -ar 16000 -ac 1 "{output_path}"',
+        shell=True, capture_output=True
+    )
+    if result.returncode != 0 or not os.path.exists(output_path):
+        # fallback: use MP3 directly if ffmpeg fails
+        import shutil
+        shutil.copy(mp3_path, output_path.replace(".wav", "_voice.mp3"))
+        print("  ⚠️   ffmpeg not found — using MP3 directly for SadTalker")
+        return mp3_path
 
-    # Cleanup chunks
-    for f in chunk_files:
-        if os.path.exists(f):
-            os.remove(f)
+    if os.path.exists(mp3_path):
+        os.remove(mp3_path)
 
     dur = _wav_duration(output_path)
     print(f"  ✅  Voice generated → {output_path}  ({dur:.0f}s)")
