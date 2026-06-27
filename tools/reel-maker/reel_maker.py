@@ -1,726 +1,896 @@
 """
-ZenPosture Cinematic Reel Maker v3
-====================================
-Generates branded Instagram/Facebook reels (1080x1920) using YOUR actual
-product images from the ZenPosture website.
+ZenPosture Cinematic Reel Maker v4  —  CEO Edition
+=====================================================
+Rebuilt from scratch for CONVERSION, not just aesthetics.
+
+What changed vs v3:
+  - Scene 1: Black-screen pattern interrupt (stops the scroll)
+  - posture-comparison.jpg gets a LEFT→RIGHT wipe reveal (money shot)
+  - Camera shake on pain scenes (creates urgency)
+  - Auto-generated background music (no external file needed)
+  - ₹999 struck-through → ₹499 price reveal
+  - "SOUND ON 🔊" callout on frame 1
+  - Max 1 bold line per scene (readable in 2s)
+  - Scarcity on CTA ("Only 47 left at this price")
+  - Rounded pill CTA button with shadow
+  - Trust strip on every scene
 
 Usage:
   python reel_maker.py --script office_worker --output reel.mp4
-  python reel_maker.py --script new_mom --music bg.mp3 --output mom.mp4
-  python reel_maker.py --script pain_hook --letterbox --output pain.mp4
-  python reel_maker.py --custom --output custom.mp4
-  python reel_maker.py --images path/to/your/images --script office_worker --output reel.mp4
+  python reel_maker.py --script new_mom       --output mom.mp4
+  python reel_maker.py --script pain_hook     --output pain.mp4
+  python reel_maker.py --script showcase      --output showcase.mp4
+  python reel_maker.py --music track.mp3 --script office_worker --output reel.mp4
+  python reel_maker.py --list
 """
 
-import argparse
-import os
-import sys
-import textwrap
-import random
-import math
+import argparse, os, sys, textwrap, random, math, struct, wave
+import numpy as np
 
 try:
-    from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
-    import numpy as np
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter
     from moviepy.editor import (
-        VideoClip, concatenate_videoclips, AudioFileClip
+        VideoClip, AudioFileClip, concatenate_videoclips
     )
     from moviepy.video.fx.all import fadein, fadeout
+    from moviepy.audio.AudioClip import AudioArrayClip
 except ImportError as e:
-    print(f"\n❌  Missing dependency: {e}\n")
-    print("Run:  pip install moviepy pillow numpy requests\n")
+    print(f"\n❌  Missing dependency: {e}")
+    print("Run:  pip install moviepy pillow numpy\n")
     sys.exit(1)
 
-# ─── Constants ─────────────────────────────────────────────────────────────────
+# ── Canvas ────────────────────────────────────────────────────────────────────
+W, H, FPS = 1080, 1920, 30
 
-W, H = 1080, 1920
-FPS  = 30
-
-# Path to your real ZenPosture images (relative to this script)
-# Automatically finds the public/images folder in the repo
-_HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_IMAGES_DIR = os.path.normpath(os.path.join(_HERE, "../../public/images"))
-
-# ─── Brand Colors ──────────────────────────────────────────────────────────────
-
-EMERALD   = (16, 185, 129)
-EMERALD_D = (5,  150, 105)
+# ── Brand colors ──────────────────────────────────────────────────────────────
+EMERALD   = (16,  185, 129)
+EMERALD_D = (5,   150, 105)
 AMBER     = (251, 191,  36)
-RED       = (239,  68,  68)
+RED       = (220,  38,  38)
 WHITE     = (255, 255, 255)
-DARK      = ( 15,  23,  42)
-MUTED     = (148, 163, 184)
+BLACK     = (0,     0,   0)
+DARK      = (10,   15,  30)
+MUTED     = (160, 180, 200)
 
-# ─── Image mapping — your actual product photos ────────────────────────────────
-#
-# Keys are mood names used in scripts below.
-# Values are filenames from public/images/.
-# The tool picks one randomly if multiple listed.
+# ── Image folder (auto-detect from repo path) ─────────────────────────────────
+_HERE = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_IMAGES = os.path.normpath(os.path.join(_HERE, "../../public/images"))
 
-MOOD_FILES = {
-    "hero":          ["hero-lifestyle.jpg"],
-    "posture_work":  ["posture-at-work.jpg"],
-    "comparison":    ["posture-comparison.jpg"],
-    "fitness":       ["fitness-belt.jpg"],
-    "postpartum":    ["postpartum-care.jpg"],
-    "happy1":        ["happy-customer-1.jpg"],
-    "happy2":        ["happy-customer-2.jpg"],
-    "happy3":        ["happy-customer-3.jpg"],
-    # Aliases used in scripts for semantic clarity
-    "problem":       ["posture-at-work.jpg", "posture-comparison.jpg"],
-    "solution":      ["hero-lifestyle.jpg", "posture-comparison.jpg"],
-    "product":       ["fitness-belt.jpg", "postpartum-care.jpg"],
-    "happy":         ["happy-customer-1.jpg", "happy-customer-2.jpg", "happy-customer-3.jpg"],
-    "cta":           ["hero-lifestyle.jpg"],
-    "new_mom":       ["postpartum-care.jpg"],
-    "pain":          ["posture-at-work.jpg"],
-    "transformation":["posture-comparison.jpg"],
+# ── Image filenames from public/images/ ───────────────────────────────────────
+IMG = {
+    "hero":       "hero-lifestyle.jpg",
+    "at_work":    "posture-at-work.jpg",
+    "comparison": "posture-comparison.jpg",
+    "fitness":    "fitness-belt.jpg",
+    "postpartum": "postpartum-care.jpg",
+    "happy1":     "happy-customer-1.jpg",
+    "happy2":     "happy-customer-2.jpg",
+    "happy3":     "happy-customer-3.jpg",
 }
 
-# ─── Script Templates ──────────────────────────────────────────────────────────
+# ─── Music Generator ──────────────────────────────────────────────────────────
 
-SCRIPTS = {
-    "office_worker": [
-        {
-            "duration": 3.5,
-            "mood":     "posture_work",
-            "overlay":  0.45,
-            "tag":      None,
-            "headline": "If you sit 6+ hours\na day… watch this.",
-            "sub":      "👇",
-            "text_pos": "center",
-            "accent":   AMBER,
-        },
-        {
-            "duration": 4.0,
-            "mood":     "pain",
-            "overlay":  0.60,
-            "tag":      "THE PROBLEM",
-            "headline": "Back pain.\nNeck stiffness.\nConstant fatigue.",
-            "sub":      "That's what bad posture does to you — every single day.",
-            "text_pos": "lower",
-            "accent":   RED,
-        },
-        {
-            "duration": 4.5,
-            "mood":     "solution",
-            "overlay":  0.40,
-            "tag":      "THE SOLUTION",
-            "headline": "Meet ZenPosture.",
-            "sub":      "India's most trusted posture corrector.\nFeel the difference from Day 1.",
-            "text_pos": "lower",
-            "accent":   EMERALD,
-        },
-        {
-            "duration": 4.0,
-            "mood":     "happy",
-            "overlay":  0.50,
-            "tag":      "REAL RESULTS",
-            "headline": "⭐⭐⭐⭐⭐",
-            "sub":      '"Back pain gone in just 1 week."\n— Priya S., Mumbai · Verified Buyer',
-            "text_pos": "lower",
-            "accent":   AMBER,
-        },
-        {
-            "duration": 4.0,
-            "mood":     "product",
-            "overlay":  0.45,
-            "tag":      "🔥 LIMITED OFFER",
-            "headline": "Starting at ₹499",
-            "sub":      "Free Shipping · Cash on Delivery\n30-Day Money-Back Guarantee",
-            "text_pos": "lower",
-            "accent":   RED,
-        },
-        {
-            "duration": 4.0,
-            "mood":     "hero",
-            "overlay":  0.40,
-            "tag":      None,
-            "headline": "Fix your posture.\nTransform your life.",
-            "sub":      "👆  zenposture.in  |  Link in bio",
-            "text_pos": "center",
-            "accent":   EMERALD,
-            "is_cta":   True,
-        },
-    ],
+def generate_music(duration, bpm=108, sr=44100):
+    """
+    Generates a simple motivational background track in memory.
+    Beat: kick + hi-hat + rising synth pad. No external files needed.
+    """
+    n = int(duration * sr)
+    audio = np.zeros(n, dtype=np.float32)
+    beat = int(sr * 60 / bpm)
 
-    "pain_hook": [
-        {
-            "duration": 3.0,
-            "mood":     "pain",
-            "overlay":  0.60,
-            "tag":      None,
-            "headline": "Your back pain\nisn't normal.",
-            "sub":      "It's fixable. 🔥",
-            "text_pos": "center",
-            "accent":   RED,
-        },
-        {
-            "duration": 4.0,
-            "mood":     "posture_work",
-            "overlay":  0.55,
-            "tag":      "THE TRUTH",
-            "headline": "8 hours of sitting\nis destroying\nyour spine.",
-            "sub":      "Slowly. Every. Single. Day.",
-            "text_pos": "lower",
-            "accent":   RED,
-        },
-        {
-            "duration": 4.0,
-            "mood":     "transformation",
-            "overlay":  0.40,
-            "tag":      "SEE THE DIFFERENCE",
-            "headline": "ZenPosture fixes it\nin DAYS.",
-            "sub":      "10,000+ Indians already know.\nNow you do too.",
-            "text_pos": "lower",
-            "accent":   EMERALD,
-        },
-        {
-            "duration": 3.5,
-            "mood":     "happy",
-            "overlay":  0.45,
-            "tag":      "VERIFIED BUYER",
-            "headline": "⭐⭐⭐⭐⭐",
-            "sub":      '"My posture changed in 2 weeks."\n— Rahul V., Bangalore',
-            "text_pos": "lower",
-            "accent":   AMBER,
-        },
-        {
-            "duration": 3.5,
-            "mood":     "hero",
-            "overlay":  0.40,
-            "tag":      None,
-            "headline": "₹499 onwards.\nCOD. Free Shipping.",
-            "sub":      "👆  zenposture.in",
-            "text_pos": "center",
-            "accent":   EMERALD,
-            "is_cta":   True,
-        },
-    ],
+    for i in range(0, n, beat):
+        # Kick drum
+        klen = int(sr * 0.12)
+        t = np.linspace(0, 0.12, klen)
+        kick = np.sin(2 * np.pi * (80 - 60*t) * t) * np.exp(-t * 25) * 0.9
+        end = min(i + klen, n)
+        audio[i:end] += kick[:end - i]
 
-    "new_mom": [
-        {
-            "duration": 4.0,
-            "mood":     "new_mom",
-            "overlay":  0.40,
-            "tag":      None,
-            "headline": "New moms —\nno one talks about\nTHIS after delivery.",
-            "sub":      "💚",
-            "text_pos": "center",
-            "accent":   EMERALD,
-        },
-        {
-            "duration": 4.5,
-            "mood":     "pain",
-            "overlay":  0.60,
-            "tag":      "THE REALITY",
-            "headline": "Weak core.\nAching back.\nAll day, every day.",
-            "sub":      "Lifting, feeding, carrying — while your body is still healing.",
-            "text_pos": "lower",
-            "accent":   RED,
-        },
-        {
-            "duration": 5.0,
-            "mood":     "new_mom",
-            "overlay":  0.35,
-            "tag":      "THE SOLUTION",
-            "headline": "ZenPosture\nPostpartum Belt.",
-            "sub":      "Supports your core while your body heals.\nBreathable. Adjustable. Made for India.",
-            "text_pos": "lower",
-            "accent":   EMERALD,
-        },
-        {
-            "duration": 4.0,
-            "mood":     "happy",
-            "overlay":  0.50,
-            "tag":      "REAL MOM · REAL RESULT",
-            "headline": "⭐⭐⭐⭐⭐",
-            "sub":      '"Felt supported from Day 1.\nEvery new mom needs this."\n— Ananya P., Delhi',
-            "text_pos": "lower",
-            "accent":   AMBER,
-        },
-        {
-            "duration": 3.5,
-            "mood":     "new_mom",
-            "overlay":  0.40,
-            "tag":      None,
-            "headline": "Starting at ₹599\nCOD · Free Shipping",
-            "sub":      "👆  zenposture.in  |  Gift it to a new mom 💚",
-            "text_pos": "center",
-            "accent":   EMERALD,
-            "is_cta":   True,
-        },
-    ],
+        # Hi-hat on every half-beat
+        hpos = i + beat // 2
+        hlen = int(sr * 0.025)
+        if hpos + hlen < n:
+            t2 = np.linspace(0, 0.025, hlen)
+            hat = np.random.randn(hlen) * np.exp(-t2 * 120) * 0.12
+            audio[hpos:hpos + hlen] += hat
 
-    "product_showcase": [
-        {
-            "duration": 3.0,
-            "mood":     "hero",
-            "overlay":  0.35,
-            "tag":      None,
-            "headline": "India's #1\nPosture Brand.",
-            "sub":      "10,000+ happy customers 💚",
-            "text_pos": "center",
-            "accent":   EMERALD,
-        },
-        {
-            "duration": 3.5,
-            "mood":     "posture_work",
-            "overlay":  0.45,
-            "tag":      "FOR DESK WORKERS",
-            "headline": "Posture Corrector",
-            "sub":      "Fix your slouch. Work pain-free. All day.",
-            "text_pos": "lower",
-            "accent":   EMERALD,
-        },
-        {
-            "duration": 3.5,
-            "mood":     "fitness",
-            "overlay":  0.40,
-            "tag":      "FOR GYM GOERS",
-            "headline": "Fitness &\nCompression Belt",
-            "sub":      "Lift heavier. Train smarter. Zero injuries.",
-            "text_pos": "lower",
-            "accent":   AMBER,
-        },
-        {
-            "duration": 3.5,
-            "mood":     "new_mom",
-            "overlay":  0.40,
-            "tag":      "FOR NEW MOMS",
-            "headline": "Postpartum\nRecovery Belt",
-            "sub":      "Gentle core support while your body heals.",
-            "text_pos": "lower",
-            "accent":   EMERALD,
-        },
-        {
-            "duration": 3.5,
-            "mood":     "transformation",
-            "overlay":  0.40,
-            "tag":      "SEE THE DIFFERENCE",
-            "headline": "Before vs After.",
-            "sub":      "93% report reduced back pain in 2 weeks.",
-            "text_pos": "lower",
-            "accent":   AMBER,
-        },
-        {
-            "duration": 4.0,
-            "mood":     "happy",
-            "overlay":  0.45,
-            "tag":      None,
-            "headline": "From ₹499.\nFree Shipping.\nCOD Available.",
-            "sub":      "👆  zenposture.in",
-            "text_pos": "center",
-            "accent":   EMERALD,
-            "is_cta":   True,
-        },
-    ],
-}
+        # Snare on beats 2 & 4
+        if (i // beat) % 2 == 1:
+            slen = int(sr * 0.08)
+            t3 = np.linspace(0, 0.08, slen)
+            snare = (np.random.randn(slen) * 0.5 + np.sin(2*np.pi*200*t3)) \
+                    * np.exp(-t3 * 35) * 0.45
+            end2 = min(i + slen, n)
+            audio[i:end2] += snare[:end2 - i]
 
-# ─── Image Loading ─────────────────────────────────────────────────────────────
+    # Synth pad (warm chords)
+    t_full = np.linspace(0, duration, n)
+    freqs = [130.81, 164.81, 196.00, 261.63]  # C3 E3 G3 C4
+    for f in freqs:
+        audio += np.sin(2 * np.pi * f * t_full) * 0.06
 
-def get_mood_image(mood, images_dir):
-    files = MOOD_FILES.get(mood, [])
-    if not files:
-        return None
-    chosen = random.choice(files)
-    path = os.path.join(images_dir, chosen)
-    if os.path.exists(path):
-        return path
-    # Fallback: pick any image in the folder
-    all_imgs = [f for f in os.listdir(images_dir) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
-    if all_imgs:
-        return os.path.join(images_dir, random.choice(all_imgs))
-    return None
+    # Fade in 1.5s, fade out 2s
+    fade_in  = np.clip(t_full / 1.5, 0, 1)
+    fade_out = np.clip((duration - t_full) / 2.0, 0, 1)
+    audio   *= fade_in * fade_out
 
+    # Normalize
+    peak = np.abs(audio).max()
+    if peak > 0:
+        audio = audio / peak * 0.65
 
-def load_and_fit(path, w, h):
+    # Stereo
+    stereo = np.stack([audio, audio], axis=1)
+    return stereo, sr
+
+# ─── Image helpers ────────────────────────────────────────────────────────────
+
+def load_img(name, images_dir, w=W, h=H):
+    path = os.path.join(images_dir, IMG.get(name, name))
+    if not os.path.exists(path):
+        # fallback: any jpg in the folder
+        files = [f for f in os.listdir(images_dir) if f.endswith((".jpg",".jpeg",".png"))]
+        if files:
+            path = os.path.join(images_dir, files[0])
+        else:
+            return np.full((h, w, 3), DARK, dtype=np.uint8)
     img = Image.open(path).convert("RGB")
     iw, ih = img.size
     scale = max(w / iw, h / ih)
     nw, nh = int(iw * scale + 1), int(ih * scale + 1)
     img = img.resize((nw, nh), Image.LANCZOS)
-    x = (nw - w) // 2
-    y = (nh - h) // 2
-    return np.array(img.crop((x, y, x + w, y + h)))
+    x, y = (nw - w) // 2, (nh - h) // 2
+    return np.array(img.crop((x, y, x+w, y+h)))
 
-# ─── Image FX ─────────────────────────────────────────────────────────────────
 
-def color_grade(frame):
-    r, g, b = frame[:,:,0].astype(np.float32), frame[:,:,1].astype(np.float32), frame[:,:,2].astype(np.float32)
-    lum = (r * 0.299 + g * 0.587 + b * 0.114)
-    dark = lum < 110
-    bright = lum > 170
-    # Teal in shadows
-    r[dark] = np.clip(r[dark] * 0.87, 0, 255)
-    b[dark] = np.clip(b[dark] * 1.10, 0, 255)
-    # Warm in highlights
-    r[bright] = np.clip(r[bright] * 1.07, 0, 255)
-    b[bright] = np.clip(b[bright] * 0.93, 0, 255)
+def color_grade(fr, teal=True, warm=False, red_tint=False):
+    r = fr[:,:,0].astype(np.float32)
+    g = fr[:,:,1].astype(np.float32)
+    b = fr[:,:,2].astype(np.float32)
+    lum = r*0.299 + g*0.587 + b*0.114
+    dark  = lum < 100
+    light = lum > 160
+    if teal:
+        r[dark] *= 0.82; b[dark] = np.clip(b[dark]*1.15, 0, 255)
+    if warm:
+        r[light] = np.clip(r[light]*1.08, 0, 255)
+        b[light] = np.clip(b[light]*0.90, 0, 255)
+    if red_tint:
+        r = np.clip(r * 1.10, 0, 255)
+        g = np.clip(g * 0.88, 0, 255)
+        b = np.clip(b * 0.85, 0, 255)
     # Slight desaturation
-    sat = 0.88
-    r2 = np.clip(lum + (r - lum) * sat, 0, 255)
-    g2 = np.clip(lum + (g - lum) * sat, 0, 255)
-    b2 = np.clip(lum + (b - lum) * sat, 0, 255)
+    sat = 0.85
+    r2 = np.clip(lum + (r - lum)*sat, 0, 255)
+    g2 = np.clip(lum + (g - lum)*sat, 0, 255)
+    b2 = np.clip(lum + (b - lum)*sat, 0, 255)
     return np.stack([r2, g2, b2], axis=2).astype(np.uint8)
 
 
-def add_vignette(frame, strength=0.55):
-    h, w = frame.shape[:2]
+def vignette(fr, s=0.6):
+    h, w = fr.shape[:2]
     Y, X = np.ogrid[:h, :w]
-    dist = np.sqrt(((X - w/2)/(w/2))**2 + ((Y - h/2)/(h/2))**2)
-    mask = 1 - np.clip(dist * strength, 0, 1)
-    return (frame * mask[:,:,np.newaxis]).astype(np.uint8)
+    d = np.sqrt(((X - w/2)/(w/2))**2 + ((Y - h/2)/(h/2))**2)
+    m = (1 - np.clip(d*s, 0, 1))[:,:,np.newaxis]
+    return (fr * m).astype(np.uint8)
 
 
-def ken_burns(img, t, duration, zoom_in=True, pan_x=0.04, pan_y=0.02):
-    h, w = img.shape[:2]
-    p = t / max(duration, 0.001)
-    z0, z1 = (1.0, 1.14) if zoom_in else (1.14, 1.0)
-    zoom = z0 + (z1 - z0) * p
-    cw, ch = int(w / zoom), int(h / zoom)
-    ox = int(pan_x * p * (w - cw))
-    oy = int(pan_y * p * (h - ch))
-    x1 = max(0, min((w - cw)//2 + ox, w - cw))
-    y1 = max(0, min((h - ch)//2 + oy, h - ch))
-    cropped = img[y1:y1+ch, x1:x1+cw]
+def ken_burns(fr, t, dur, zoom_in=True, px=0.03, py=0.02):
+    h, w = fr.shape[:2]
+    p = t / max(dur, 0.001)
+    z = (1.0 + 0.13*p) if zoom_in else (1.13 - 0.13*p)
+    cw, ch = int(w/z), int(h/z)
+    ox = int(px * p * (w - cw))
+    oy = int(py * p * (h - ch))
+    x1 = max(0, min((w-cw)//2 + ox, w-cw))
+    y1 = max(0, min((h-ch)//2 + oy, h-ch))
+    cropped = fr[y1:y1+ch, x1:x1+cw]
     return np.array(Image.fromarray(cropped).resize((w, h), Image.BILINEAR))
 
-# ─── Font ─────────────────────────────────────────────────────────────────────
 
-def load_font(size, bold=False):
+def shake(fr, t, strength=6):
+    """Subtle camera shake — creates urgency/pain feeling."""
+    dx = int(math.sin(t * 23) * strength * random.uniform(0.5, 1.0))
+    dy = int(math.cos(t * 17) * strength * random.uniform(0.5, 1.0))
+    dx = max(-20, min(20, dx))
+    dy = max(-20, min(20, dy))
+    h, w = fr.shape[:2]
+    x1, y1 = max(0, dx), max(0, dy)
+    x2, y2 = min(w, w+dx), min(h, h+dy)
+    cropped = fr[y1:y2, x1:x2]
+    return np.array(Image.fromarray(cropped).resize((w, h), Image.BILINEAR))
+
+# ─── Font ────────────────────────────────────────────────────────────────────
+
+def font(size, bold=False):
     paths = [
         f"C:/Windows/Fonts/{'arialbd' if bold else 'arial'}.ttf",
         f"C:/Windows/Fonts/{'calibrib' if bold else 'calibri'}.ttf",
         f"C:/Windows/Fonts/{'verdanab' if bold else 'verdana'}.ttf",
-        f"/System/Library/Fonts/Supplemental/Arial{'%20Bold' if bold else ''}.ttf",
-        f"/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/Helvetica.ttc",
         f"/usr/share/fonts/truetype/dejavu/DejaVuSans{'-Bold' if bold else ''}.ttf",
         f"/usr/share/fonts/truetype/liberation/LiberationSans-{'Bold' if bold else 'Regular'}.ttf",
     ]
     for p in paths:
         if os.path.exists(p):
-            try:
-                return ImageFont.truetype(p, size)
-            except Exception:
-                continue
+            try: return ImageFont.truetype(p, size)
+            except: continue
     return ImageFont.load_default()
 
-# ─── Text Rendering ────────────────────────────────────────────────────────────
+# ─── Drawing helpers ──────────────────────────────────────────────────────────
 
-def shadow_text(draw, x, y, text, font, color, shadow=(0,0,0), offset=3):
-    for dx in [-offset, 0, offset]:
-        for dy in [-offset, 0, offset]:
+def shadow_text(d, x, y, text, fnt, color, shadow=(0,0,0), off=4):
+    for dx in [-off, 0, off]:
+        for dy in [-off, 0, off]:
             if dx or dy:
-                draw.text((x+dx, y+dy), text, font=font, fill=(*shadow, 140))
-    draw.text((x, y), text, font=font, fill=color)
+                d.text((x+dx, y+dy), text, font=fnt, fill=(*shadow, 120))
+    d.text((x, y), text, font=fnt, fill=color)
 
 
-def render_overlay(slide, progress, images_dir):
-    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    d = ImageDraw.Draw(overlay)
+def centered_text(d, text, y, fnt, color, w=W, shadow=True):
+    bb = d.textbbox((0,0), text, font=fnt)
+    tw = bb[2]-bb[0]
+    th = bb[3]-bb[1]
+    x = (w - tw) // 2
+    if shadow:
+        shadow_text(d, x, y, text, fnt, color)
+    else:
+        d.text((x, y), text, font=fnt, fill=color)
+    return th
 
-    pos     = slide.get("text_pos", "lower")
-    accent  = slide.get("accent", WHITE)
-    tag     = slide.get("tag")
-    is_cta  = slide.get("is_cta", False)
-    ov      = int(slide.get("overlay", 0.5) * 255)
 
-    # Text slide-in animation (fast settle)
-    anim = int((1 - min(progress * 3.0, 1)) * 55)
+def draw_pill(d, x1, y1, x2, y2, color, alpha=255):
+    r = (y2-y1)//2
+    d.rounded_rectangle([x1, y1, x2, y2], radius=r, fill=(*color, alpha))
 
-    # ── Gradient darkness overlay ──
+# ─── Scene Builders ───────────────────────────────────────────────────────────
+
+def overlay_base(img_np, darkness=0.55):
+    """RGBA overlay canvas with dark gradient."""
+    ov = Image.new("RGBA", (W, H), (0,0,0,0))
+    d  = ImageDraw.Draw(ov)
     for y in range(H):
-        if pos == "lower":
-            t = max(0, (y - H * 0.30) / (H * 0.70))
-            a = int(ov * min(t * 1.5, 1))
-        else:
-            t = 0.4 + 0.6 * math.sin(math.pi * y / H)
-            a = int(ov * 0.9 * t)
-        d.line([(0, y), (W, y)], fill=(0, 0, 0, a))
+        t = y / H
+        a = int(darkness * 255 * (0.3 + 0.7 * t))
+        d.line([(0,y),(W,y)], fill=(0,0,0,a))
+    return ov
 
-    # ── Logo top center ──
-    f_logo = load_font(42, bold=True)
-    logo = "ZENPOSTURE"
-    bx = d.textbbox((0,0), logo, font=f_logo)
-    lw = bx[2] - bx[0]
-    shadow_text(d, (W-lw)//2, 75, logo, f_logo, (*WHITE, 180))
 
-    # ── Emerald underline under logo ──
-    bar_y = 75 + (bx[3]-bx[1]) + 8
-    bar_w = lw + 20
-    d.rectangle([(W-bar_w)//2, bar_y, (W+bar_w)//2, bar_y+4], fill=(*EMERALD, 220))
+def logo_strip(d):
+    f = font(38, bold=True)
+    text = "ZENPOSTURE"
+    bb = d.textbbox((0,0), text, font=f)
+    tw = bb[2]-bb[0]
+    x = (W - tw) // 2
+    shadow_text(d, x, 72, text, f, (*WHITE, 200))
+    bar_w = tw + 24
+    d.rectangle([(W-bar_w)//2, 72+(bb[3]-bb[1])+6, (W+bar_w)//2, 72+(bb[3]-bb[1])+10],
+                fill=(*EMERALD, 220))
 
-    # ── Tag pill ──
-    if tag:
-        f_tag = load_font(30, bold=True)
-        tb = d.textbbox((0,0), tag, font=f_tag)
-        tw = tb[2]-tb[0]
-        tx = (W-tw)//2
-        pad = 14
-        d.rounded_rectangle([tx-pad, 155, tx+tw+pad, 155+44], radius=22, fill=(*accent, 210))
-        d.text((tx, 159), tag, font=f_tag, fill=(*DARK, 255))
 
-    # ── Headline ──
-    headline = slide.get("headline", "")
-    lines = []
-    for line in headline.split("\n"):
-        lines.extend(textwrap.wrap(line, width=20) or [""])
+def trust_strip(d):
+    f = font(28)
+    text = "Free Shipping  ·  COD Available  ·  30-Day Guarantee"
+    bb = d.textbbox((0,0), text, font=f)
+    tw = bb[2]-bb[0]
+    d.rectangle([0, H-70, W, H], fill=(0,0,0,130))
+    d.text(((W-tw)//2, H-52), text, font=f, fill=(*WHITE, 130))
 
-    f_h = load_font(90, bold=True)
-    f_h2 = load_font(74, bold=True)
-    f_use = f_h if max((len(l) for l in lines), default=0) <= 13 else f_h2
 
-    if pos == "lower":
-        hy = H - 500 + anim
-    else:
-        hy = H//2 - (len(lines) * 110)//2 + anim
+def tag_pill(d, text, accent=EMERALD, y=155):
+    f = font(30, bold=True)
+    bb = d.textbbox((0,0), text, font=f)
+    tw, th = bb[2]-bb[0], bb[3]-bb[1]
+    pad = 16
+    draw_pill(d, (W-tw)//2-pad, y, (W+tw)//2+pad, y+th+12, accent, 210)
+    d.text(((W-tw)//2, y+6), text, font=f, fill=(*DARK, 255))
 
-    for i, line in enumerate(lines):
-        bb = d.textbbox((0,0), line, font=f_use)
-        lw2 = bb[2]-bb[0]
-        lh2 = bb[3]-bb[1]
-        x = (W - lw2)//2
-        col = accent if i == 0 else WHITE
-        shadow_text(d, x, hy, line, f_use, col, offset=4)
-        hy += int(lh2 * 1.18)
 
-    # ── Subtext ──
-    sub = slide.get("sub", "")
-    if sub:
-        f_sub = load_font(40)
-        sy = hy + 18 + anim//2
-        for line in sub.split("\n"):
-            bb = d.textbbox((0,0), line, font=f_sub)
-            sw = bb[2]-bb[0]
-            sh = bb[3]-bb[1]
-            shadow_text(d, (W-sw)//2, sy, line, f_sub, (*MUTED, 230))
-            sy += int(sh * 1.28)
+# ── SCENE 1: Black-screen pattern interrupt ────────────────────────────────────
 
-    # ── CTA button bar ──
-    if is_cta:
-        btn_y = H - 220
-        btn_h = 110
-        # Pill button
-        d.rounded_rectangle([80, btn_y, W-80, btn_y+btn_h], radius=55, fill=(*EMERALD, 240))
-        f_cta = load_font(46, bold=True)
-        cta_t = "Shop Now →  zenposture.in"
-        cb = d.textbbox((0,0), cta_t, font=f_cta)
-        cw2 = cb[2]-cb[0]
-        d.text(((W-cw2)//2, btn_y+28), cta_t, font=f_cta, fill=(*WHITE, 255))
-
-    # ── Bottom trust strip ──
-    if not is_cta:
-        trust = "Free Shipping  ·  COD Available  ·  30-Day Guarantee"
-        f_tr = load_font(28)
-        tb2 = d.textbbox((0,0), trust, font=f_tr)
-        tw2 = tb2[2]-tb2[0]
-        d.rectangle([0, H-72, W, H], fill=(0,0,0,100))
-        d.text(((W-tw2)//2, H-56), trust, font=f_tr, fill=(*WHITE, 140))
-
-    return overlay
-
-# ─── Slide Clip ────────────────────────────────────────────────────────────────
-
-def build_slide(slide, images_dir, letterbox=False):
-    duration = slide["duration"]
-    path = get_mood_image(slide["mood"], images_dir)
-
-    if path:
-        raw = load_and_fit(path, W, H)
-        raw = color_grade(raw)
-        raw = add_vignette(raw)
-    else:
-        print(f"    ⚠️  No image found for mood '{slide['mood']}' in {images_dir}")
-        raw = np.full((H, W, 3), DARK, dtype=np.uint8)
-
-    zoom_in = random.choice([True, False])
-    px = random.uniform(-0.035, 0.035)
-    py = random.uniform(-0.02,  0.02)
-    bar_h = int(H * 0.075) if letterbox else 0
-
+def scene_pattern_interrupt(line1, line2="", duration=3.0, sound_on=True):
     def make_frame(t):
         progress = t / duration
-        fade = min(min(t / 0.35, 1.0), min((duration - t) / 0.35, 1.0))
+        fade = min(t / 0.25, 1.0)
 
-        bg = ken_burns(raw, t, duration, zoom_in, px, py)
-        bg_pil = Image.fromarray(bg)
+        bg = Image.new("RGB", (W, H), BLACK)
+        d  = ImageDraw.Draw(bg)
 
-        ov = render_overlay(slide, progress, images_dir)
+        # SOUND ON callout (top right)
+        if sound_on:
+            f_s = font(30, bold=True)
+            d.text((W-240, 80), "🔊 SOUND ON", font=f_s, fill=(*EMERALD, int(fade*220)))
 
-        # Fade in/out the overlay alpha
-        if fade < 1.0:
-            faded = Image.new("RGBA", ov.size, (0,0,0,0))
-            faded.paste(ov, mask=Image.fromarray(
-                (np.array(ov)[:,:,3] * fade).astype(np.uint8)
-            ))
-            ov = faded
+        # Big headline — animate scale with fade
+        f_big = font(100, bold=True)
+        f_big2 = font(80, bold=True)
+        fnt = f_big if len(line1) <= 16 else f_big2
 
-        bg_pil.paste(ov, (0,0), ov)
+        anim_y = int((1 - min(progress*3, 1)) * 50)
 
-        if bar_h:
-            dr = ImageDraw.Draw(bg_pil)
-            dr.rectangle([0, 0, W, bar_h], fill=(0,0,0))
-            dr.rectangle([0, H-bar_h, W, H], fill=(0,0,0))
+        y = H//2 - 140 + anim_y
+        for i, part in enumerate(line1.split("\n")):
+            bb = d.textbbox((0,0), part, font=fnt)
+            tw = bb[2]-bb[0]
+            th = bb[3]-bb[1]
+            col = (*AMBER, int(fade*255)) if i==0 else (*WHITE, int(fade*255))
+            d.text(((W-tw)//2, y), part, font=fnt, fill=col)
+            y += th + 10
 
-        return np.array(bg_pil.convert("RGB"))
+        if line2:
+            f_sub = font(48)
+            bb = d.textbbox((0,0), line2, font=f_sub)
+            tw = bb[2]-bb[0]
+            d.text(((W-tw)//2, y+24+anim_y//2), line2, font=f_sub,
+                   fill=(*MUTED, int(fade*200)))
+
+        # Emerald accent line
+        line_w = 120
+        anim_lw = int(line_w * min(progress*4, 1))
+        d.rectangle([(W-anim_lw)//2, H//2+160, (W+anim_lw)//2, H//2+165],
+                    fill=(*EMERALD, int(fade*255)))
+
+        return np.array(bg)
 
     return VideoClip(make_frame, duration=duration).set_fps(FPS)
 
-# ─── Build Reel ────────────────────────────────────────────────────────────────
 
-def build_reel(script_name, output_path, images_dir, bg_music=None, letterbox=False):
-    slides = SCRIPTS.get(script_name)
-    if not slides:
-        print(f"❌  Unknown script '{script_name}'. Available: {', '.join(SCRIPTS)}")
+# ── SCENE 2: Pain / problem photo with shake ──────────────────────────────────
+
+def scene_pain(img_key, headline, sub, images_dir, duration=4.0,
+               do_shake=True, tag=None):
+    raw = load_img(img_key, images_dir)
+    raw = color_grade(raw, teal=False, red_tint=True)
+    raw = vignette(raw, s=0.7)
+    zi  = random.choice([True, False])
+    px, py = random.uniform(-0.03, 0.03), random.uniform(-0.02, 0.02)
+
+    def make_frame(t):
+        progress = t / duration
+        fade = min(min(t/0.3, 1.0), min((duration-t)/0.3, 1.0))
+        anim = int((1 - min(progress*3, 1)) * 60)
+
+        fr = ken_burns(raw, t, duration, zi, px, py)
+        if do_shake and t < duration * 0.6:
+            fr = shake(fr, t, strength=5)
+
+        bg = Image.fromarray(fr)
+        ov = overlay_base(fr, darkness=0.60)
+        d  = ImageDraw.Draw(ov)
+
+        logo_strip(d)
+        if tag:
+            tag_pill(d, tag, RED)
+
+        # RED urgency bar left edge
+        d.rectangle([0, 0, 8, H], fill=(*RED, 200))
+
+        # Headline
+        f_h = font(86, bold=True)
+        f_h2 = font(70, bold=True)
+        lines = headline.split("\n")
+        fnt_h = f_h if max(len(l) for l in lines) <= 14 else f_h2
+        y = H - 480 + anim
+        for i, line in enumerate(lines):
+            bb = d.textbbox((0,0), line, font=fnt_h)
+            tw = bb[2]-bb[0]; th = bb[3]-bb[1]
+            col = (*RED, int(fade*255)) if i==0 else (*WHITE, int(fade*255))
+            shadow_text(d, (W-tw)//2, y, line, fnt_h, col, off=4)
+            y += th + 8
+
+        # Subtext
+        if sub:
+            f_sub = font(38)
+            for line in sub.split("\n"):
+                bb = d.textbbox((0,0), line, font=f_sub)
+                tw = bb[2]-bb[0]; th = bb[3]-bb[1]
+                shadow_text(d, (W-tw)//2, y+16+anim//2, line, f_sub,
+                            (*MUTED, int(fade*220)))
+                y += th + 12
+
+        trust_strip(d)
+        bg.paste(ov, (0,0), ov)
+        return np.array(bg.convert("RGB"))
+
+    return VideoClip(make_frame, duration=duration).set_fps(FPS)
+
+
+# ── SCENE 3: Wipe-reveal comparison (the MONEY SHOT) ─────────────────────────
+
+def scene_comparison_wipe(images_dir, headline, sub, duration=5.0):
+    """
+    posture-comparison.jpg revealed left→right like a curtain pull.
+    Left side (before) fades in first, then right side (after) wipes in.
+    """
+    raw = load_img("comparison", images_dir)
+    raw_graded = color_grade(raw, teal=True, warm=True)
+    raw_graded = vignette(raw_graded, s=0.5)
+
+    def make_frame(t):
+        progress = t / duration
+        fade = min(min(t/0.3, 1.0), min((duration-t)/0.3, 1.0))
+
+        # Ken Burns — slow zoom in
+        fr = ken_burns(raw_graded, t, duration, zoom_in=True, px=0.01, py=0.01)
+
+        # Wipe progress: left side shows from start, right side wipes in after 1s
+        wipe_progress = min(max((t - 0.8) / (duration * 0.55), 0.0), 1.0)
+        reveal_x = int(W * wipe_progress)
+
+        bg = Image.fromarray(fr)
+
+        # Left side = slightly darker (before)
+        left_dark = Image.fromarray(
+            (fr * np.array([[[0.55, 0.55, 0.60]]]) ).clip(0,255).astype(np.uint8)
+        )
+        if reveal_x < W:
+            bg.paste(left_dark.crop((reveal_x, 0, W, H)), (reveal_x, 0))
+
+        # Wipe line
+        ov = Image.new("RGBA", (W, H), (0,0,0,0))
+        d  = ImageDraw.Draw(ov)
+
+        if 0 < reveal_x < W:
+            # Glowing wipe line
+            for off in range(-6, 7):
+                alpha = int(255 * (1 - abs(off)/7))
+                d.line([(reveal_x+off, 0), (reveal_x+off, H)],
+                       fill=(*EMERALD, alpha), width=2)
+
+        logo_strip(d)
+        tag_pill(d, "BEFORE  →  AFTER", EMERALD)
+
+        # Labels
+        if wipe_progress > 0.1:
+            f_label = font(40, bold=True)
+            d.text((60, H//2 - 30), "❌ BEFORE", font=f_label, fill=(*RED, 200))
+        if wipe_progress > 0.5:
+            f_label = font(40, bold=True)
+            d.text((W//2 + 30, H//2 - 30), "✅ AFTER", font=f_label, fill=(*EMERALD, 200))
+
+        # Headline (lower third, appears after wipe completes)
+        if wipe_progress > 0.7:
+            anim = int((1 - min((wipe_progress - 0.7) / 0.3, 1)) * 40)
+            f_h = font(76, bold=True)
+            lines = headline.split("\n")
+            y = H - 440 + anim
+            for i, line in enumerate(lines):
+                bb = d.textbbox((0,0), line, font=f_h)
+                tw = bb[2]-bb[0]; th = bb[3]-bb[1]
+                col = (*EMERALD, int(fade*255)) if i==0 else (*WHITE, int(fade*255))
+                shadow_text(d, (W-tw)//2, y, line, f_h, col)
+                y += th + 8
+            if sub:
+                f_sub = font(36)
+                for line in sub.split("\n"):
+                    bb = d.textbbox((0,0), line, font=f_sub)
+                    tw = bb[2]-bb[0]; th = bb[3]-bb[1]
+                    shadow_text(d, (W-tw)//2, y+12, line, f_sub, (*MUTED, int(fade*200)))
+                    y += th + 10
+
+        trust_strip(d)
+        bg.paste(ov, (0,0), ov)
+        return np.array(bg.convert("RGB"))
+
+    return VideoClip(make_frame, duration=duration).set_fps(FPS)
+
+
+# ── SCENE 4: Happy customers cycling ─────────────────────────────────────────
+
+def scene_happy_customers(images_dir, headline, sub, duration=4.0, tag=None):
+    imgs = [load_img(k, images_dir) for k in ("happy1","happy2","happy3")]
+    imgs = [color_grade(im, teal=True, warm=True) for im in imgs]
+    imgs = [vignette(im, s=0.5) for im in imgs]
+
+    def make_frame(t):
+        progress = t / duration
+        fade = min(min(t/0.3, 1.0), min((duration-t)/0.3, 1.0))
+
+        # Cycle through customer photos every ~1.3s
+        idx = int((t / duration) * len(imgs)) % len(imgs)
+        fr  = ken_burns(imgs[idx], t % (duration/len(imgs)),
+                        duration/len(imgs), zoom_in=True)
+
+        bg = Image.fromarray(fr)
+        ov = overlay_base(fr, darkness=0.48)
+        d  = ImageDraw.Draw(ov)
+
+        logo_strip(d)
+        if tag:
+            tag_pill(d, tag, AMBER)
+
+        anim = int((1 - min(progress*3, 1)) * 50)
+        f_h  = font(86, bold=True)
+        lines = headline.split("\n")
+        y = H - 440 + anim
+        for i, line in enumerate(lines):
+            bb = d.textbbox((0,0), line, font=f_h)
+            tw = bb[2]-bb[0]; th = bb[3]-bb[1]
+            col = (*AMBER, int(fade*255)) if i==0 else (*WHITE, int(fade*255))
+            shadow_text(d, (W-tw)//2, y, line, f_h, col)
+            y += th + 8
+        if sub:
+            f_sub = font(38)
+            for line in sub.split("\n"):
+                bb = d.textbbox((0,0), line, font=f_sub)
+                tw = bb[2]-bb[0]; th = bb[3]-bb[1]
+                shadow_text(d, (W-tw)//2, y+14+anim//2, line, f_sub,
+                            (*MUTED, int(fade*220)))
+                y += th + 10
+
+        trust_strip(d)
+        bg.paste(ov, (0,0), ov)
+        return np.array(bg.convert("RGB"))
+
+    return VideoClip(make_frame, duration=duration).set_fps(FPS)
+
+
+# ── SCENE 5: Product + price reveal ──────────────────────────────────────────
+
+def scene_price_reveal(img_key, images_dir, duration=3.5, tag=None):
+    raw = load_img(img_key, images_dir)
+    raw = color_grade(raw, teal=True, warm=True)
+    raw = vignette(raw, s=0.55)
+
+    def make_frame(t):
+        progress = t / duration
+        fade = min(min(t/0.3, 1.0), min((duration-t)/0.3, 1.0))
+        anim = int((1 - min(progress*3, 1)) * 50)
+
+        fr = ken_burns(raw, t, duration, zoom_in=False, px=0.02, py=0.02)
+        bg = Image.fromarray(fr)
+        ov = overlay_base(fr, darkness=0.58)
+        d  = ImageDraw.Draw(ov)
+
+        logo_strip(d)
+        if tag:
+            tag_pill(d, tag, RED)
+
+        # Scarcity
+        f_sc = font(32, bold=True)
+        sc_text = "⚡ Only 47 units left at this price!"
+        bb = d.textbbox((0,0), sc_text, font=f_sc)
+        tw = bb[2]-bb[0]
+        draw_pill(d, (W-tw)//2 - 20, H-340+anim, (W+tw)//2 + 20, H-295+anim, RED, 200)
+        d.text(((W-tw)//2, H-335+anim), sc_text, font=f_sc, fill=(*WHITE, int(fade*255)))
+
+        # Price — old struck through → new
+        y_p = H - 280 + anim
+        f_old = font(56)
+        old_text = "₹999"
+        bb_o = d.textbbox((0,0), old_text, font=f_old)
+        ow = bb_o[2]-bb_o[0]; oh = bb_o[3]-bb_o[1]
+        old_x = W//2 - ow - 20
+        d.text((old_x, y_p), old_text, font=f_old, fill=(*MUTED, int(fade*180)))
+        d.line([(old_x-4, y_p+oh//2), (old_x+ow+4, y_p+oh//2)],
+               fill=(*RED, int(fade*255)), width=4)
+
+        f_new = font(110, bold=True)
+        new_text = "₹499"
+        bb_n = d.textbbox((0,0), new_text, font=f_new)
+        nw_ = bb_n[2]-bb_n[0]
+        new_x = W//2 + 10
+        shadow_text(d, new_x, y_p - 20, new_text, f_new, (*EMERALD, int(fade*255)))
+
+        # Savings badge
+        if progress > 0.3:
+            f_save = font(32, bold=True)
+            save_t = "50% OFF"
+            bb_s = d.textbbox((0,0), save_t, font=f_save)
+            sw = bb_s[2]-bb_s[0]
+            draw_pill(d, new_x + nw_ + 14, y_p+10, new_x + nw_ + sw + 34, y_p+52, AMBER, 230)
+            d.text((new_x + nw_ + 18, y_p+12), save_t, font=f_save, fill=(*DARK, 255))
+
+        trust_strip(d)
+        bg.paste(ov, (0,0), ov)
+        return np.array(bg.convert("RGB"))
+
+    return VideoClip(make_frame, duration=duration).set_fps(FPS)
+
+
+# ── SCENE 6: CTA finale ───────────────────────────────────────────────────────
+
+def scene_cta(img_key, images_dir, headline, duration=4.0):
+    raw = load_img(img_key, images_dir)
+    raw = color_grade(raw, teal=True, warm=True)
+    raw = vignette(raw, s=0.5)
+
+    def make_frame(t):
+        progress = t / duration
+        fade = min(min(t/0.35, 1.0), min((duration-t)/0.35, 1.0))
+        anim = int((1 - min(progress*2.5, 1)) * 55)
+
+        fr = ken_burns(raw, t, duration, zoom_in=True, px=0.02, py=0.01)
+        bg = Image.fromarray(fr)
+        ov = overlay_base(fr, darkness=0.48)
+        d  = ImageDraw.Draw(ov)
+
+        logo_strip(d)
+
+        # Main headline
+        f_h = font(88, bold=True)
+        lines = headline.split("\n")
+        y = H//2 - (len(lines)*105)//2 + anim
+        for i, line in enumerate(lines):
+            bb = d.textbbox((0,0), line, font=f_h)
+            tw = bb[2]-bb[0]; th = bb[3]-bb[1]
+            col = (*WHITE, int(fade*255)) if i==0 else (*EMERALD, int(fade*255))
+            shadow_text(d, (W-tw)//2, y, line, f_h, col)
+            y += th + 10
+
+        # Big pill CTA button
+        btn_y = H - 310 + anim
+        draw_pill(d, 80, btn_y, W-80, btn_y+120, EMERALD, int(fade*245))
+        # Button shadow
+        for i in range(1, 12):
+            draw_pill(d, 80+i, btn_y+i, W-80+i, btn_y+120+i, (0,60,30), int(40/i))
+
+        f_btn = font(50, bold=True)
+        btn_text = "Shop Now →  zenposture.in"
+        bb_b = d.textbbox((0,0), btn_text, font=f_btn)
+        bw = bb_b[2]-bb_b[0]
+        d.text(((W-bw)//2, btn_y+34), btn_text, font=f_btn, fill=(*WHITE, int(fade*255)))
+
+        # Below button
+        f_trust = font(32)
+        tb = "COD  ·  Free Shipping  ·  30-Day Money-Back"
+        bb_t = d.textbbox((0,0), tb, font=f_trust)
+        tw = bb_t[2]-bb_t[0]
+        d.text(((W-tw)//2, btn_y+142), tb, font=f_trust, fill=(*WHITE, int(fade*160)))
+
+        bg.paste(ov, (0,0), ov)
+        return np.array(bg.convert("RGB"))
+
+    return VideoClip(make_frame, duration=duration).set_fps(FPS)
+
+
+# ─── Script Definitions ───────────────────────────────────────────────────────
+
+def get_clips(script, images_dir):
+    if script == "office_worker":
+        return [
+            scene_pattern_interrupt(
+                "STILL IGNORING\nYOUR BACK PAIN?",
+                "This 20-second reel might change that. 👇",
+                duration=3.0
+            ),
+            scene_pain(
+                "at_work",
+                "8 hours of sitting\nis destroying\nyour spine.",
+                "Back pain. Neck stiffness. Fatigue. Every. Single. Day.",
+                images_dir, duration=4.0, do_shake=True, tag="THE PROBLEM"
+            ),
+            scene_comparison_wipe(
+                images_dir,
+                "This is what\nZenPosture does.",
+                "Clinically-designed posture correction.\nFeel it from Day 1.",
+                duration=5.0
+            ),
+            scene_happy_customers(
+                images_dir,
+                "⭐⭐⭐⭐⭐",
+                '"Back pain gone in 1 week." — Priya, Mumbai\n10,000+ verified buyers across India',
+                duration=4.0, tag="REAL BUYERS · REAL RESULTS"
+            ),
+            scene_price_reveal(
+                "fitness", images_dir, duration=3.5, tag="🔥 FLASH SALE"
+            ),
+            scene_cta(
+                "hero", images_dir,
+                "Fix your posture.\nTransform your life.",
+                duration=4.0
+            ),
+        ]
+
+    elif script == "pain_hook":
+        return [
+            scene_pattern_interrupt(
+                "YOUR BACK PAIN\nISN'T NORMAL.",
+                "It's fixable. In DAYS. Not months. 👇",
+                duration=2.5
+            ),
+            scene_pain(
+                "at_work",
+                "Most Indians spend\n8 hours slowly\nwrecking their spine.",
+                "And then wonder why their back hurts at 30.",
+                images_dir, duration=3.5, do_shake=True, tag="THE TRUTH"
+            ),
+            scene_comparison_wipe(
+                images_dir,
+                "One product.\nTotal transformation.",
+                "93% of users report reduced back pain in 2 weeks.",
+                duration=4.5
+            ),
+            scene_price_reveal(
+                "fitness", images_dir, duration=3.5, tag="🔥 LIMITED OFFER"
+            ),
+            scene_cta(
+                "hero", images_dir,
+                "10,000+ Indians\nalready fixed theirs.",
+                duration=3.5
+            ),
+        ]
+
+    elif script == "new_mom":
+        return [
+            scene_pattern_interrupt(
+                "NEW MOMS —\nNO ONE TELLS\nYOU THIS.",
+                "Your back pain after delivery is NOT normal. 💚",
+                duration=3.0
+            ),
+            scene_pain(
+                "at_work",
+                "Weak core.\nAching back.\nAll day, every day.",
+                "Lifting, feeding, carrying — while your body is still healing.",
+                images_dir, duration=4.0, do_shake=False, tag="THE REALITY"
+            ),
+            scene_comparison_wipe(
+                images_dir,
+                "ZenPosture Postpartum\nBelt fixes this.",
+                "Gentle core support. Breathable. Made for India.",
+                duration=5.0
+            ),
+            scene_happy_customers(
+                images_dir,
+                "⭐⭐⭐⭐⭐",
+                '"Felt supported from Day 1. Every new mom needs this."\n— Ananya, Delhi',
+                duration=4.0, tag="REAL MOM · REAL RESULT"
+            ),
+            scene_price_reveal(
+                "postpartum", images_dir, duration=3.5, tag="GIFT IT 💚"
+            ),
+            scene_cta(
+                "hero", images_dir,
+                "Gift it to a mom\nwho deserves it. 💚",
+                duration=3.5
+            ),
+        ]
+
+    elif script == "showcase":
+        return [
+            scene_pattern_interrupt(
+                "INDIA'S #1\nPOSTURE BRAND.",
+                "10,000+ happy customers can't be wrong. 💚",
+                duration=2.5
+            ),
+            scene_pain(
+                "at_work",
+                "Desk worker?\nBack pain is\nnot your destiny.",
+                "ZenPosture Corrector — worn under your shirt all day.",
+                images_dir, duration=3.5, do_shake=False, tag="FOR DESK WORKERS"
+            ),
+            scene_pain(
+                "fitness",
+                "Gym goer?\nLift heavier.\nTrain smarter.",
+                "ZenPosture Compression Belt — zero lower-back injuries.",
+                images_dir, duration=3.5, do_shake=False, tag="FOR GYM GOERS"
+            ),
+            scene_pain(
+                "postpartum",
+                "New mom?\nYour recovery\nmatters too.",
+                "ZenPosture Postpartum Belt — gentle core support.",
+                images_dir, duration=3.5, do_shake=False, tag="FOR NEW MOMS"
+            ),
+            scene_comparison_wipe(
+                images_dir,
+                "See the difference.",
+                "93% report less pain in 2 weeks. No gimmicks.",
+                duration=4.0
+            ),
+            scene_happy_customers(
+                images_dir, "⭐⭐⭐⭐⭐",
+                "10,000+ verified buyers across India",
+                duration=3.5, tag="VERIFIED REVIEWS"
+            ),
+            scene_price_reveal("fitness", images_dir, duration=3.5, tag="🔥 SALE ON NOW"),
+            scene_cta("hero", images_dir, "Shop All Products →\nzenposture.in", duration=4.0),
+        ]
+
+    else:
+        print(f"❌  Unknown script '{script}'. Use: office_worker | pain_hook | new_mom | showcase")
         sys.exit(1)
 
+
+# ─── Build & Export ───────────────────────────────────────────────────────────
+
+def build(script, output, images_dir, music_path=None, letterbox=False):
     if not os.path.isdir(images_dir):
         print(f"❌  Images folder not found: {images_dir}")
-        print(f"    Use --images to point to your product photos folder.")
+        print(f"    Pass --images path/to/your/product/photos")
         sys.exit(1)
 
-    img_list = [f for f in os.listdir(images_dir) if f.lower().endswith((".jpg",".jpeg",".png"))]
-    total_s = sum(s["duration"] for s in slides)
+    print(f"\n{'━'*54}")
+    print(f"  🎬  ZenPosture Reel Maker v4  —  CEO Edition")
+    print(f"{'━'*54}")
+    print(f"  Script  : {script}")
+    print(f"  Images  : {images_dir}")
+    print(f"  Output  : {output}\n")
 
-    print(f"\n🎬  ZenPosture Reel Maker v3")
-    print(f"    Script: {script_name}  |  {len(slides)} scenes  |  {total_s:.0f}s")
-    print(f"    Images: {images_dir}  ({len(img_list)} photos found)")
-    if letterbox:
-        print(f"    Mode: Cinematic Letterbox")
-    print()
+    clips = get_clips(script, images_dir)
+    total = sum(c.duration for c in clips)
+    print(f"  Scenes  : {len(clips)}  |  Total: {total:.0f}s\n")
 
-    clips = []
-    for i, slide in enumerate(slides):
-        img_name = MOOD_FILES.get(slide["mood"], ["?"])[0]
-        print(f"  🎥 Scene {i+1}/{len(slides)}: {img_name}  —  \"{slide['headline'][:30].strip()}…\"")
-        clip = build_slide(slide, images_dir, letterbox)
-        clips.append(clip)
-
-    print(f"\n  🎞️  Compositing {len(clips)} scenes…")
+    print("  🎞️  Compositing scenes…")
     final = concatenate_videoclips(clips, method="compose")
 
-    if bg_music and os.path.exists(bg_music):
-        print(f"  🎵  Adding music: {os.path.basename(bg_music)}")
-        audio = AudioFileClip(bg_music).volumex(0.25)
+    # ── Letterbox bars ──
+    if letterbox:
+        bar_h = int(H * 0.07)
+        bar_clip_top    = ColorClip((W, bar_h), color=(0,0,0)).set_duration(final.duration)
+        bar_clip_bottom = ColorClip((W, bar_h), color=(0,0,0)).set_duration(final.duration)
+        from moviepy.editor import CompositeVideoClip
+        bar_clip_top    = bar_clip_top.set_position(("center","top"))
+        bar_clip_bottom = bar_clip_bottom.set_position(("center","bottom"))
+        final = CompositeVideoClip([final, bar_clip_top, bar_clip_bottom])
+
+    # ── Audio ──
+    if music_path and os.path.exists(music_path):
+        print(f"  🎵  Loading music: {os.path.basename(music_path)}")
+        audio = AudioFileClip(music_path).volumex(0.28)
         if audio.duration < final.duration:
             from moviepy.editor import concatenate_audioclips
             loops = int(final.duration / audio.duration) + 2
-            audio = concatenate_audioclips([audio] * loops)
+            audio = concatenate_audioclips([audio]*loops)
         audio = audio.subclip(0, final.duration).audio_fadeout(2.0)
         final = final.set_audio(audio)
-    elif bg_music:
-        print(f"  ⚠️  Music file not found: {bg_music}")
     else:
-        print(f"  💡  Add --music track.mp3 for background music")
-        print(f"      Free music: https://pixabay.com/music/  (search 'motivation')")
+        print("  🎵  Generating background music (no --music file provided)…")
+        stereo, sr = generate_music(total + 0.5)
+        audio_clip = AudioArrayClip(stereo, fps=sr).audio_fadeout(2.0)
+        audio_clip = audio_clip.subclip(0, final.duration)
+        final = final.set_audio(audio_clip)
 
-    print(f"\n  💾  Exporting → {output_path}  (takes 2–4 min)…\n")
+    print(f"  💾  Rendering → {output}  (takes 2–5 min)…\n")
     final.write_videofile(
-        output_path,
-        fps=FPS,
-        codec="libx264",
-        audio_codec="aac",
-        temp_audiofile="temp_audio.m4a",
-        remove_temp=True,
-        preset="medium",
-        ffmpeg_params=["-crf", "17", "-pix_fmt", "yuv420p"],
+        output, fps=FPS, codec="libx264", audio_codec="aac",
+        temp_audiofile="temp_audio.m4a", remove_temp=True,
+        preset="medium", ffmpeg_params=["-crf","17","-pix_fmt","yuv420p"],
         logger=None,
     )
 
-    mb = os.path.getsize(output_path) / 1024 / 1024
-    print(f"\n{'━'*52}")
-    print(f"  ✅  DONE!")
-    print(f"  📁  File   : {output_path}  ({mb:.1f} MB)")
-    print(f"  ⏱   Length : {total_s:.0f} seconds")
-    print(f"  📐  Size   : 1080×1920  (Instagram / Facebook Reels)")
+    mb = os.path.getsize(output) / 1024 / 1024
+    print(f"\n{'━'*54}")
+    print(f"  ✅  DONE!  {output}  ({mb:.1f} MB  ·  {total:.0f}s)")
+    print(f"  📐  1080×1920 — Instagram / Facebook Reels ready")
     print(f"  🚀  Upload to Meta Ads Manager → Reels placement")
-    print(f"{'━'*52}\n")
+    print(f"{'━'*54}\n")
 
-# ─── Interactive Custom Mode ───────────────────────────────────────────────────
 
-def interactive_mode():
-    moods = list(MOOD_FILES.keys())
-    print("\n🎨  Custom Reel Builder")
-    print(f"   Available image moods:\n   {', '.join(moods)}\n")
-    slides = []
-    idx = 1
-    while True:
-        print(f"─── Scene {idx} (blank headline = done) ───")
-        hl = input("  Headline (use \\n for new line): ").strip().replace("\\n", "\n")
-        if not hl:
-            break
-        sub    = input("  Subtext: ").strip().replace("\\n", "\n")
-        mood   = input(f"  Image mood [{moods[0]}]: ").strip() or moods[0]
-        tag    = input("  Tag label (or blank): ").strip() or None
-        dur    = input("  Duration seconds [4]: ").strip()
-        pos    = input("  Text position [lower/center]: ").strip() or "lower"
-        is_cta = input("  CTA slide? [y/N]: ").strip().lower() == "y"
-        slides.append({
-            "duration": float(dur) if dur else 4.0,
-            "mood":     mood if mood in MOOD_FILES else moods[0],
-            "overlay":  0.50,
-            "tag":      tag,
-            "headline": hl,
-            "sub":      sub,
-            "text_pos": pos if pos in ("lower","center") else "lower",
-            "accent":   EMERALD,
-            "is_cta":   is_cta,
-        })
-        idx += 1
-        print()
-    if not slides:
-        print("No scenes. Exiting.")
-        sys.exit(0)
-    SCRIPTS["__custom__"] = slides
-    return "__custom__"
-
-# ─── CLI ──────────────────────────────────────────────────────────────────────
+# ─── CLI ─────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="ZenPosture Cinematic Reel Maker v3",
+    p = argparse.ArgumentParser(
+        description="ZenPosture Reel Maker v4 — CEO Edition",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""
+        Scripts:
+          office_worker   Desk-worker back pain → ZenPosture solution
+          pain_hook       Aggressive cold-audience hook (shorter)
+          new_mom         Postpartum recovery audience
+          showcase        All products — best for brand awareness ads
+
         Examples:
           python reel_maker.py --script office_worker --output office.mp4
-          python reel_maker.py --script product_showcase --output showcase.mp4
-          python reel_maker.py --script new_mom --music bg.mp3 --output mom.mp4
-          python reel_maker.py --script pain_hook --letterbox --output pain.mp4
-          python reel_maker.py --custom --output custom.mp4
+          python reel_maker.py --script new_mom --music track.mp3 --output mom.mp4
+          python reel_maker.py --script showcase --letterbox --output brand.mp4
 
-        Scripts:  office_worker | pain_hook | new_mom | product_showcase
+        Free music: https://pixabay.com/music/  (search 'motivational')
         """)
     )
-    parser.add_argument("--script",   choices=list(SCRIPTS.keys()))
-    parser.add_argument("--custom",   action="store_true")
-    parser.add_argument("--output",   default="zenposture_reel.mp4")
-    parser.add_argument("--music",    default=None)
-    parser.add_argument("--letterbox",action="store_true")
-    parser.add_argument("--images",   default=DEFAULT_IMAGES_DIR,
-                        help="Path to your product images folder")
-    parser.add_argument("--list",     action="store_true")
-    args = parser.parse_args()
-
-    print("━" * 52)
-    print("  🎬  ZenPosture Cinematic Reel Maker v3")
-    print("━" * 52)
+    p.add_argument("--script",   choices=["office_worker","pain_hook","new_mom","showcase"], required=True)
+    p.add_argument("--output",   default="zenposture_reel.mp4")
+    p.add_argument("--music",    default=None, help="Path to MP3 (optional; auto-generates if not given)")
+    p.add_argument("--images",   default=DEFAULT_IMAGES, help="Path to product images folder")
+    p.add_argument("--letterbox",action="store_true", help="Add cinematic letterbox bars")
+    p.add_argument("--list",     action="store_true")
+    args = p.parse_args()
 
     if args.list:
-        print("\nAvailable scripts:\n")
-        for name, slides in SCRIPTS.items():
-            total = sum(s["duration"] for s in slides)
-            print(f"  {name:<20} {len(slides)} scenes, {total:.0f}s")
-        print()
+        print("\nScripts: office_worker | pain_hook | new_mom | showcase\n")
         sys.exit(0)
 
-    name = interactive_mode() if args.custom else args.script
-    if not name:
-        parser.print_help()
-        print("\n💡  Try: python reel_maker.py --script office_worker --output reel.mp4\n")
-        sys.exit(0)
-
-    build_reel(name, args.output, args.images, bg_music=args.music, letterbox=args.letterbox)
+    build(args.script, args.output, args.images, args.music, args.letterbox)
 
 
 if __name__ == "__main__":
