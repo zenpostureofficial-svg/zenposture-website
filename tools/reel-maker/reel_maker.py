@@ -36,7 +36,7 @@ try:
         VideoClip, ImageClip, CompositeVideoClip,
         ColorClip, concatenate_videoclips, AudioFileClip
     )
-    from moviepy.video.fx.all import fadein, fadeout, crossfadein, crossfadeout
+    from moviepy.video.fx.all import fadein, fadeout
     import requests
 except ImportError as e:
     print(f"\n❌  Missing dependency: {e}\n")
