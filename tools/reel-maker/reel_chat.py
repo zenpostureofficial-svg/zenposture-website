@@ -204,6 +204,27 @@ class Memory:
 
 # ── Ollama helpers ────────────────────────────────────────────────────────────
 
+def ask_permission(action, detail="", default_yes=False):
+    """
+    Ask user before doing something (internet download, file write, etc.).
+    Returns True if allowed, False if denied.
+    """
+    prompt_suffix = " [Y/n]" if default_yes else " [y/N]"
+    if detail:
+        print(f"\n{c('  ZenBot asks:', BOLD + YELLOW)} {action}")
+        print(f"  {c('Detail:', DIM)} {detail}")
+    else:
+        print(f"\n{c('  ZenBot asks:', BOLD + YELLOW)} {action}")
+    try:
+        ans = input(f"  Allow?{prompt_suffix}: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    if default_yes:
+        return ans not in ("n", "no")
+    return ans in ("y", "yes")
+
+
 def ollama_available():
     try:
         urllib.request.urlopen("http://localhost:11434", timeout=3)
@@ -461,13 +482,28 @@ def render_reel(data, product_key, output, mood, model, memory):
             ),
         ]
 
+    # ── Permission: render ────────────────────────────────────────────────────
+    if not ask_permission(
+        f"Render '{output}' (1080×1920 Instagram Reel)",
+        f"Product: {prod['name']} | Mood: {mood or prod['mood']} | ~30-60 sec render time",
+        default_yes=True
+    ):
+        raise RuntimeError("Render cancelled by user.")
+
+    # ── Permission: music download ────────────────────────────────────────────
+    _allow_download = ask_permission(
+        "Download background music from the internet",
+        "Free royalty-free track (~3 MB). If denied, a generated beat will be used instead.",
+        default_yes=True
+    )
+
     for attempt in range(1, 4):
         try:
             clips = _build_clips(data)
             from moviepy.editor import concatenate_videoclips, AudioFileClip
             final = concatenate_videoclips(clips, method="compose")
 
-            music = rm.get_music_path(mood=mood or prod["mood"])
+            music = rm.get_music_path(mood=mood or prod["mood"]) if _allow_download else None
             if music and os.path.exists(music):
                 audio = AudioFileClip(music).volumex(0.26)
                 if audio.duration < final.duration:
@@ -477,7 +513,10 @@ def render_reel(data, product_key, output, mood, model, memory):
                 audio = audio.subclip(0, final.duration).audio_fadeout(2.0)
                 final = final.set_audio(audio)
             else:
-                print(c("  ⚠️  No music downloaded — using generated beat", YELLOW))
+                if _allow_download:
+                    print(c("  ⚠️  Download failed — using generated beat instead", YELLOW))
+                else:
+                    print(c("  ℹ️  Using generated beat (download not allowed)", CYAN))
                 stereo, sr = rm.generate_music(final.duration + 0.5)
                 from moviepy.audio.AudioClip import AudioArrayClip
                 import numpy as np
