@@ -811,42 +811,42 @@ def get_clips(script, images_dir):
     elif script == "new_mom":
         return [
             scene_pattern_interrupt(
-                "NEW MOMS —\nNO ONE TELLS\nYOU THIS.",
-                "Your back pain after delivery is NOT normal.",
-                caption="Postpartum back pain affects 8 in 10 new moms in India.",
+                "POV: You just\nhad a baby &\nyour back is\nDESTROYED.",
+                "Nobody warned you about THIS part.",
+                caption="Postpartum back pain affects 8 in 10 new moms. You're not alone.",
                 duration=3.0
             ),
             scene_pain(
-                "at_work",
-                "Weak core.\nAching back.\nAll day, every day.",
-                "Lifting, feeding, carrying — while your body heals.",
+                "postpartum",
+                "Every feed.\nEvery lift.\nEvery step. HURTS.",
+                "Your core just went through 9 months of trauma. It needs real support.",
                 images_dir,
-                caption="Your body just did something incredible. Support it.",
-                duration=3.0, do_shake=False, tag="THE REALITY"
+                caption="Weak postpartum core = back pain that doesn't go away on its own.",
+                duration=3.0, do_shake=True, tag="REAL TALK"
             ),
             scene_comparison_wipe(
                 images_dir,
-                "ZenPosture Postpartum\nBelt fixes this.",
-                "Gentle core support. Breathable. Made for India.",
-                caption="Gentle postpartum support — feels like a hug for your core.",
+                "ZenPosture\nPostpartum Belt.",
+                "Soft. Breathable. Wearable all day. Back pain gone in days.",
+                caption="Clinically designed postpartum support — feels like a gentle hug.",
                 duration=4.5
             ),
             scene_happy_customers(
                 images_dir,
                 "⭐⭐⭐⭐⭐",
-                '"Felt supported from Day 1. Every new mom needs this."\n— Ananya, Delhi',
-                caption="Thousands of Indian moms are already wearing it.",
-                duration=3.5, tag="REAL MOM · REAL RESULT"
+                '"I wore it Day 3 post-delivery. My back pain was 80% better in a week."\n— Priya, Mumbai',
+                caption="Thousands of Indian moms already wearing it. Their recovery. Their words.",
+                duration=3.5, tag="MOM APPROVED · INDIA LOVED"
             ),
             scene_price_reveal(
                 "postpartum", images_dir,
-                caption="Perfect gift: ₹499 only. Free shipping. COD available.",
-                duration=3.0, tag="GIFT IT"
+                caption="₹499 only. Free shipping. Cash on delivery available.",
+                duration=3.0, tag="BEST GIFT FOR A NEW MOM"
             ),
             scene_cta(
-                "hero", images_dir,
-                "Gift it to a mom\nwho deserves it.",
-                caption="Order now at zenposture.in — delivered to your door.",
+                "postpartum", images_dir,
+                "Her body did\nthe hard part.\nNow support it.",
+                caption="zenposture.in — free shipping · COD · 30-day returns.",
                 duration=3.5
             ),
         ]
