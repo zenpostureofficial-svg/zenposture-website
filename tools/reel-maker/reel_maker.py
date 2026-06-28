@@ -188,6 +188,17 @@ def generate_music(duration, bpm=108, sr=44100):
 
 # ─── Image helpers ────────────────────────────────────────────────────────────
 
+# focal_y: 0.0=top, 0.5=center, 1.0=bottom — lets portrait images show the right subject area
+IMG_FOCAL_Y = {
+    "postpartum": 0.35,
+    "at_work":    0.45,
+    "hero":       0.40,
+    "fitness":    0.40,
+    "happy1":     0.35,
+    "happy2":     0.35,
+    "happy3":     0.35,
+}
+
 def load_img(name, images_dir, w=W, h=H):
     path = os.path.join(images_dir, IMG.get(name, name))
     if not os.path.exists(path):
@@ -201,7 +212,10 @@ def load_img(name, images_dir, w=W, h=H):
     scale = max(w / iw, h / ih)
     nw, nh = int(iw * scale + 1), int(ih * scale + 1)
     img = img.resize((nw, nh), Image.LANCZOS)
-    x, y = (nw - w) // 2, (nh - h) // 2
+    x = (nw - w) // 2
+    focal = IMG_FOCAL_Y.get(name, 0.5)
+    y = int((nh - h) * focal)
+    y = max(0, min(y, nh - h))
     return np.array(img.crop((x, y, x+w, y+h)))
 
 
@@ -291,6 +305,52 @@ def centered_shadowed(d, text, y, fnt, color, alpha=255):
     x = (W - tw) // 2
     shadow_text(d, x, y, text, fnt, (*color, alpha))
     return th
+
+
+def wrap_lines(text, fnt, max_w=W - 80):
+    """Wrap a single line so it never exceeds max_w pixels. Returns list of lines."""
+    import textwrap as _tw
+    result = []
+    for raw_line in text.split("\n"):
+        words = raw_line.split()
+        if not words:
+            result.append("")
+            continue
+        current = ""
+        for word in words:
+            test = (current + " " + word).strip()
+            bb = ImageDraw.Draw(Image.new("RGB", (1, 1))).textbbox((0, 0), test, font=fnt)
+            if bb[2] - bb[0] <= max_w:
+                current = test
+            else:
+                if current:
+                    result.append(current)
+                current = word
+        if current:
+            result.append(current)
+    return result
+
+
+def draw_text_block(d, text, fnt, y_start, color, anim=0, alpha=255,
+                    bg_alpha=160, line_gap=10, max_w=W - 80):
+    """Draw a block of auto-wrapped text centered on canvas. Returns final y."""
+    lines = wrap_lines(text, fnt, max_w)
+    line_heights = []
+    for line in lines:
+        bb = d.textbbox((0, 0), line, font=fnt)
+        line_heights.append(bb[3] - bb[1])
+    total_h = sum(line_heights) + line_gap * (len(lines) - 1)
+    y = y_start + anim
+    if bg_alpha > 0:
+        text_bg_bar(d, y - 10, y + total_h + 10, alpha=bg_alpha)
+    for i, line in enumerate(lines):
+        tw, th = text_width_height(d, line, fnt)
+        col = color if isinstance(color[0], int) else color[i % len(color)]
+        if len(col) == 3:
+            col = (*col, alpha)
+        shadow_text(d, (W - tw) // 2, y, line, fnt, col)
+        y += line_heights[i] + line_gap
+    return y
 
 
 def draw_caption(d, caption_text, alpha=255):
@@ -433,31 +493,16 @@ def scene_pain(img_key, headline, sub, images_dir, caption="",
         d.rectangle([0, 0, 8, H], fill=(*RED, 200))
 
         # Headline with bg bar
-        lines = headline.split("\n")
-        f_h = font(min(86, int(1200 / max(len(l) for l in lines))), bold=True)
-        total_h = sum(d.textbbox((0,0), l, font=f_h)[3] - d.textbbox((0,0), l, font=f_h)[1] + 10
-                      for l in lines)
-        y = H - 480 + anim
-        text_bg_bar(d, y, y + total_h, alpha=160)
-
-        for i, line in enumerate(lines):
-            tw, th = text_width_height(d, line, f_h)
-            col = (*RED, int(fade * 255)) if i == 0 else (*WHITE, int(fade * 255))
-            shadow_text(d, (W - tw) // 2, y, line, f_h, col)
-            y += th + 10
+        f_h = font(82, bold=True)
+        y = H - 490 + anim
+        colors = [(*RED, int(fade * 255)), (*WHITE, int(fade * 255)), (*WHITE, int(fade * 255))]
+        y = draw_text_block(d, headline, f_h, y, colors[0], bg_alpha=160, line_gap=10)
 
         # Subtext
         if sub:
             f_sub = font(36)
-            sub_lines = sub.split("\n")
-            sub_total = sum(d.textbbox((0,0), l, font=f_sub)[3] - d.textbbox((0,0), l, font=f_sub)[1] + 8
-                            for l in sub_lines)
-            text_bg_bar(d, y + 12 + anim // 2, y + 12 + anim // 2 + sub_total, alpha=140)
-            for line in sub_lines:
-                tw, th = text_width_height(d, line, f_sub)
-                shadow_text(d, (W - tw) // 2, y + 14 + anim // 2, line, f_sub,
-                            (*MUTED, int(fade * 210)))
-                y += th + 10
+            draw_text_block(d, sub, f_sub, y + 8, (*MUTED, int(fade * 210)),
+                            bg_alpha=140, line_gap=8)
 
         trust_strip(d)
         bg.paste(ov, (0, 0), ov)
@@ -511,27 +556,14 @@ def scene_comparison_wipe(images_dir, headline, sub, caption="", duration=4.5):
         # Headline — appears after wipe
         if wipe_progress > 0.65:
             anim = int((1 - min((wipe_progress - 0.65) / 0.35, 1)) * 38)
-            lines = headline.split("\n")
             f_h = font(72, bold=True)
-            total_h = sum(d.textbbox((0,0), l, font=f_h)[3] - d.textbbox((0,0), l, font=f_h)[1] + 8
-                          for l in lines)
-            y = H - 430 + anim
-            text_bg_bar(d, y, y + total_h, alpha=165)
-            for i, line in enumerate(lines):
-                tw, th = text_width_height(d, line, f_h)
-                col = (*EMERALD, int(fade * 255)) if i == 0 else (*WHITE, int(fade * 255))
-                shadow_text(d, (W - tw) // 2, y, line, f_h, col)
-                y += th + 8
+            y = H - 440 + anim
+            y = draw_text_block(d, headline, f_h, y, (*EMERALD, int(fade * 255)),
+                                bg_alpha=165, line_gap=8)
             if sub:
                 f_sub = font(34)
-                sub_lines = sub.split("\n")
-                sub_total = sum(d.textbbox((0,0), l, font=f_sub)[3] - d.textbbox((0,0), l, font=f_sub)[1] + 6
-                                for l in sub_lines)
-                text_bg_bar(d, y + 10, y + 10 + sub_total, alpha=145)
-                for line in sub_lines:
-                    tw, th = text_width_height(d, line, f_sub)
-                    shadow_text(d, (W - tw) // 2, y + 12, line, f_sub, (*MUTED, int(fade * 200)))
-                    y += th + 8
+                draw_text_block(d, sub, f_sub, y + 10, (*MUTED, int(fade * 200)),
+                                bg_alpha=145, line_gap=6)
 
         trust_strip(d)
         bg.paste(ov, (0, 0), ov)
@@ -566,30 +598,15 @@ def scene_happy_customers(images_dir, headline, sub, caption="", duration=3.5, t
         if tag:
             tag_pill(d, tag, AMBER)
 
-        lines = headline.split("\n")
         f_h = font(80, bold=True)
-        total_h = sum(d.textbbox((0,0), l, font=f_h)[3] - d.textbbox((0,0), l, font=f_h)[1] + 8
-                      for l in lines)
-        y = H - 430 + anim
-        text_bg_bar(d, y, y + total_h, alpha=155)
-
-        for i, line in enumerate(lines):
-            tw, th = text_width_height(d, line, f_h)
-            col = (*AMBER, int(fade * 255)) if i == 0 else (*WHITE, int(fade * 255))
-            shadow_text(d, (W - tw) // 2, y, line, f_h, col)
-            y += th + 8
+        y = H - 440 + anim
+        y = draw_text_block(d, headline, f_h, y, (*AMBER, int(fade * 255)),
+                            bg_alpha=155, line_gap=8)
 
         if sub:
-            f_sub = font(36)
-            sub_lines = sub.split("\n")
-            sub_total = sum(d.textbbox((0,0), l, font=f_sub)[3] - d.textbbox((0,0), l, font=f_sub)[1] + 6
-                            for l in sub_lines)
-            text_bg_bar(d, y + 12 + anim // 2, y + 12 + anim // 2 + sub_total, alpha=140)
-            for line in sub_lines:
-                tw, th = text_width_height(d, line, f_sub)
-                shadow_text(d, (W - tw) // 2, y + 14 + anim // 2, line, f_sub,
-                            (*MUTED, int(fade * 215)))
-                y += th + 10
+            f_sub = font(34)
+            draw_text_block(d, sub, f_sub, y + 10, (*MUTED, int(fade * 215)),
+                            bg_alpha=140, line_gap=6)
 
         trust_strip(d)
         bg.paste(ov, (0, 0), ov)
@@ -682,17 +699,10 @@ def scene_cta(img_key, images_dir, headline, caption="", duration=3.5):
         draw_caption(d, caption, alpha=int(fade * 255))
 
         # Headline
-        lines = headline.split("\n")
         f_h = font(84, bold=True)
-        total_h = sum(d.textbbox((0,0), l, font=f_h)[3] - d.textbbox((0,0), l, font=f_h)[1] + 10
-                      for l in lines)
-        y = H // 2 - total_h // 2 + anim - 80
-        text_bg_bar(d, y, y + total_h, alpha=0)  # no bar — bg is already dark
-        for i, line in enumerate(lines):
-            tw, th = text_width_height(d, line, f_h)
-            col = (*WHITE, int(fade * 255)) if i == 0 else (*EMERALD, int(fade * 255))
-            shadow_text(d, (W - tw) // 2, y, line, f_h, col)
-            y += th + 10
+        y = H // 2 - 240 + anim
+        draw_text_block(d, headline, f_h, y, (*WHITE, int(fade * 255)),
+                        bg_alpha=0, line_gap=10)
 
         # Big pill CTA button
         btn_y = H - 320 + anim
@@ -992,6 +1002,121 @@ def build(script, output, images_dir, music_path=None, letterbox=False):
     print(f"{'━'*54}\n")
 
 
+# ─── Ollama AI Script Generator ───────────────────────────────────────────────
+
+_OLLAMA_URL = "http://localhost:11434/api/generate"
+
+_OLLAMA_PROMPT = """You are a viral Instagram Reels copywriter for ZenPosture, an Indian D2C health brand.
+Product: {product}
+Audience: {audience}
+
+Write a 6-scene Instagram Reel script. Return ONLY valid JSON, no markdown, no explanation.
+Format:
+{{
+  "hook":      {{"line1": "2-4 word CAPS hook", "line2": "one punchy subline", "caption": "subtitle text"}},
+  "pain":      {{"headline": "pain headline\\nline2\\nline3", "sub": "one line explanation", "caption": "caption"}},
+  "reveal":    {{"headline": "product benefit\\nline2", "sub": "feature line", "caption": "caption"}},
+  "social":    {{"headline": "⭐⭐⭐⭐⭐", "sub": "short testimonial quote\\n— Name, City", "caption": "caption"}},
+  "price":     {{"caption": "price + offer line", "tag": "4-word tag"}},
+  "cta":       {{"headline": "emotional cta\\nline2\\nline3", "caption": "zenposture.in caption"}}
+}}
+
+Rules:
+- hook line1: ALL CAPS, max 4 words per line, use \\n for line breaks, max 4 lines
+- pain headline: use \\n between lines, max 3 lines, each line max 4 words
+- All text must fit a mobile screen — keep lines SHORT
+- Make it emotional and scroll-stopping
+- Price is always ₹499
+- Brand: ZenPosture, website: zenposture.in
+"""
+
+PRODUCTS = {
+    "new_mom":      ("ZenPosture Postpartum Recovery Belt", "new mothers 25-40, postpartum recovery"),
+    "office_worker":("ZenPosture Posture Corrector",        "office workers 22-45, desk job back pain"),
+    "gym":          ("ZenPosture Compression Belt",         "gym-goers 20-40, weightlifting, deadlifts"),
+    "showcase":     ("ZenPosture full product range",       "general Indian health-conscious audience"),
+}
+
+def generate_script_ollama(script_key, model="llama3"):
+    """Call local Ollama to generate a fresh viral script. Returns dict or None."""
+    product, audience = PRODUCTS.get(script_key, PRODUCTS["office_worker"])
+    prompt = _OLLAMA_PROMPT.format(product=product, audience=audience)
+
+    print(f"  🤖  Generating fresh script with Ollama ({model})…")
+    try:
+        import urllib.request, json
+        payload = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode()
+        req = urllib.request.Request(_OLLAMA_URL, data=payload,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            resp = json.loads(r.read())
+        raw = resp.get("response", "")
+        # strip any markdown code fences
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        data = json.loads(raw.strip())
+        print("  ✅  Ollama script ready!\n")
+        return data
+    except Exception as e:
+        print(f"  ⚠️   Ollama failed ({e}). Using built-in script.\n")
+        return None
+
+
+def build_ollama_clips(data, images_dir):
+    """Turn Ollama JSON into scene clips."""
+    h = data.get("hook", {})
+    pa = data.get("pain", {})
+    rv = data.get("reveal", {})
+    so = data.get("social", {})
+    pr = data.get("price", {})
+    ct = data.get("cta", {})
+
+    return [
+        scene_pattern_interrupt(
+            h.get("line1", "STOP SCROLLING"),
+            h.get("line2", ""),
+            caption=h.get("caption", ""),
+            duration=3.0
+        ),
+        scene_pain(
+            "postpartum",
+            pa.get("headline", "It HURTS.\nEvery day."),
+            pa.get("sub", "Your body needs support."),
+            images_dir,
+            caption=pa.get("caption", ""),
+            duration=3.0, do_shake=True, tag="REAL TALK"
+        ),
+        scene_comparison_wipe(
+            images_dir,
+            rv.get("headline", "ZenPosture\nFixes This."),
+            rv.get("sub", "Soft. Breathable. Effective."),
+            caption=rv.get("caption", ""),
+            duration=4.5
+        ),
+        scene_happy_customers(
+            images_dir,
+            so.get("headline", "⭐⭐⭐⭐⭐"),
+            so.get("sub", '"Changed my life."\n— Happy Customer'),
+            caption=so.get("caption", ""),
+            duration=3.5, tag="REAL RESULTS"
+        ),
+        scene_price_reveal(
+            "postpartum", images_dir,
+            caption=pr.get("caption", "₹499 only. Free shipping. COD."),
+            duration=3.0, tag=pr.get("tag", "LIMITED OFFER")
+        ),
+        scene_cta(
+            "postpartum", images_dir,
+            ct.get("headline", "Order now.\nzenposture.in"),
+            caption=ct.get("caption", "Free shipping · COD · 30-day returns"),
+            duration=3.5
+        ),
+    ]
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -1007,8 +1132,9 @@ def main():
 
         Examples:
           python reel_maker.py --script office_worker --output office.mp4
-          python reel_maker.py --script new_mom --music track.mp3 --output mom.mp4
-          python reel_maker.py --script showcase --letterbox --output brand.mp4
+          python reel_maker.py --script new_mom --output mom.mp4
+          python reel_maker.py --script new_mom --generate --output mom_ai.mp4
+          python reel_maker.py --script new_mom --generate --model llama3 --output mom_ai.mp4
 
         Free music: https://pixabay.com/music/  (search 'motivational')
         """)
@@ -1020,12 +1146,41 @@ def main():
                    help="Path to MP3 (optional; auto-downloads royalty-free track if not given)")
     p.add_argument("--images",    default=DEFAULT_IMAGES, help="Path to product images folder")
     p.add_argument("--letterbox", action="store_true", help="Add cinematic letterbox bars")
+    p.add_argument("--generate",  action="store_true",
+                   help="Use local Ollama to generate a fresh viral script")
+    p.add_argument("--model",     default="llama3",
+                   help="Ollama model name (default: llama3)")
     p.add_argument("--list",      action="store_true")
     args = p.parse_args()
 
     if args.list:
         print("\nScripts: office_worker | pain_hook | new_mom | showcase\n")
         sys.exit(0)
+
+    if args.generate:
+        ollama_data = generate_script_ollama(args.script, args.model)
+        if ollama_data:
+            images_dir = args.images if args.images else DEFAULT_IMAGES
+            clips = build_ollama_clips(ollama_data, images_dir)
+            # reuse build() internals — assemble + render
+            from moviepy.editor import concatenate_videoclips
+            final = concatenate_videoclips(clips, method="compose")
+            music_path = args.music or get_music_path()
+            if music_path and os.path.exists(music_path):
+                from moviepy.editor import AudioFileClip
+                audio = AudioFileClip(music_path).volumex(0.18)
+                audio = audio.subclip(0, final.duration).audio_fadeout(2.0)
+                final = final.set_audio(audio)
+            print(f"  💾  Rendering → {args.output}…\n")
+            final.write_videofile(
+                args.output, fps=FPS, codec="libx264", audio_codec="aac",
+                temp_audiofile="temp_audio.m4a", remove_temp=True,
+                preset="medium", ffmpeg_params=["-crf", "17", "-pix_fmt", "yuv420p"],
+                logger=None,
+            )
+            mb = os.path.getsize(args.output) / 1024 / 1024
+            print(f"\n✅  DONE!  {args.output}  ({mb:.1f} MB)")
+            return
 
     build(args.script, args.output, args.images, args.music, args.letterbox)
 
