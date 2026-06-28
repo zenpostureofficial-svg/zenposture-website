@@ -6,3 +6,6 @@ node_modules/
 *.log
 .DS_Store
 prisma/dev.db
+config/credentials.json
+zenposture_ai_agent/memory/memory.json
+zenposture_ai_agent/logs/

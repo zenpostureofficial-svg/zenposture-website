@@ -1,0 +1,35 @@
+{
+  "agent_name": "ZenBot",
+  "default_model": "gemma4",
+  "fallback_model": "llama3.1:8b",
+  "ollama_url": "http://localhost:11434",
+  "brand": {
+    "name": "ZenPosture",
+    "website": "zenposture.in",
+    "shopify_store": "",
+    "instagram_handle": "@zenpostureofficial",
+    "youtube_channel": "",
+    "currency": "INR",
+    "price": 499
+  },
+  "permissions": {
+    "auto_post_social": false,
+    "auto_spend_ads": false,
+    "auto_delete_files": false,
+    "auto_run_code": false,
+    "auto_browse_internet": false,
+    "always_ask_before_posting": true,
+    "always_ask_before_spending": true,
+    "always_ask_before_deleting": true,
+    "max_ad_spend_per_action": 500
+  },
+  "voice": {
+    "enabled": false,
+    "tts_voice": "en-IN-PrabhatNeural",
+    "tts_rate": "-10%"
+  },
+  "search": {
+    "max_results": 5,
+    "safe_search": true
+  }
+}
