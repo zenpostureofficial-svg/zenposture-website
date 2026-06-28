@@ -785,7 +785,8 @@ def main():
                     print(f"\n{c(hr(), GREEN)}")
                     print(f"{c('  ✅  DONE!', BOLD + GREEN)}  {output}  ({mb:.1f} MB)")
                     print(f"  {c('1080×1920', DIM)} — Instagram / Facebook Reels ready")
-                    print(f"  {c('Next: rate it (e.g. \"rate last reel 4/5\") or say \"regenerate\"', DIM)}")
+                    hint = 'Next: rate it (e.g. "rate last reel 4/5") or say "regenerate"'
+                    print(f"  {c(hint, DIM)}")
                     print(c(hr(), GREEN) + "\n")
                 except Exception as e:
                     print(f"\n{c('  ❌  Render failed: ' + str(e), RED)}\n")
