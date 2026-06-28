@@ -117,18 +117,48 @@ def get_font_path(bold=False):
     return None
 
 
-def get_music_path():
-    """
-    Returns path to bundled background music.
-    Downloads a royalty-free track from Mixkit on first run, caches in _assets/.
-    """
-    cached = os.path.join(_ASSETS, "bg_music.mp3")
-    if os.path.exists(cached):
+MUSIC_LIBRARY = {
+    "motivational": [
+        "https://cdn.pixabay.com/audio/2024/02/15/audio_d6c7b4a7c2.mp3",
+        "https://cdn.pixabay.com/audio/2022/10/25/audio_946ff5c5fd.mp3",
+        "https://cdn.pixabay.com/audio/2023/06/08/audio_6e9c6a5e6e.mp3",
+    ],
+    "emotional": [
+        "https://cdn.pixabay.com/audio/2023/01/20/audio_6e0d6e6ab3.mp3",
+        "https://cdn.pixabay.com/audio/2022/11/22/audio_febc508520.mp3",
+    ],
+    "energetic": [
+        "https://cdn.pixabay.com/audio/2022/08/02/audio_884fe92c21.mp3",
+        "https://cdn.pixabay.com/audio/2023/03/09/audio_0625658ed6.mp3",
+    ],
+    "calm": [
+        "https://cdn.pixabay.com/audio/2022/03/15/audio_1a609c8f35.mp3",
+        "https://cdn.pixabay.com/audio/2023/08/16/audio_5e3e6b47e5.mp3",
+    ],
+}
+
+SCRIPT_MOOD = {
+    "new_mom":       "emotional",
+    "office_worker": "motivational",
+    "pain_hook":     "energetic",
+    "showcase":      "motivational",
+}
+
+def get_music_path(mood=None, force_fresh=False):
+    """Pick a random track by mood. Downloads and caches it."""
+    mood = mood or "motivational"
+    urls = MUSIC_LIBRARY.get(mood, MUSIC_LIBRARY["motivational"])
+    url  = random.choice(urls)
+    track_id = url.split("/")[-1].split(".")[0][:12]
+    cached = os.path.join(_ASSETS, f"music_{mood}_{track_id}.mp3")
+    if os.path.exists(cached) and not force_fresh:
         return cached
-    # Mixkit royalty-free motivational track (free, no attribution required)
-    url = "https://cdn.pixabay.com/audio/2024/02/15/audio_d6c7b4a7c2.mp3"
     if _download(url, cached):
         return cached
+    # try any cached track as fallback
+    existing = [f for f in os.listdir(_ASSETS) if f.startswith("music_") and f.endswith(".mp3")]
+    if existing:
+        return os.path.join(_ASSETS, existing[0])
     return None
 
 
@@ -926,7 +956,7 @@ def get_clips(script, images_dir):
 
 # ─── Build & Export ───────────────────────────────────────────────────────────
 
-def build(script, output, images_dir, music_path=None, letterbox=False):
+def build(script, output, images_dir, music_path=None, letterbox=False, mood=None):
     if not os.path.isdir(images_dir):
         print(f"❌  Images folder not found: {images_dir}")
         print(f"    Pass --images path/to/your/product/photos")
@@ -969,9 +999,10 @@ def build(script, output, images_dir, music_path=None, letterbox=False):
         audio = audio.subclip(0, final.duration).audio_fadeout(2.0)
         final = final.set_audio(audio)
     else:
-        bundled = get_music_path()
+        track_mood = mood or SCRIPT_MOOD.get(script, "motivational")
+        bundled = get_music_path(mood=track_mood)
         if bundled and os.path.exists(bundled):
-            print(f"  🎵  Using bundled background music…")
+            print(f"  🎵  Using {track_mood} music: {os.path.basename(bundled)}…")
             audio = AudioFileClip(bundled).volumex(0.26)
             if audio.duration < final.duration:
                 from moviepy.editor import concatenate_audioclips
